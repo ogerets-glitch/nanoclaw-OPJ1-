@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(systemctl --user stop openclaw-gateway 2>&1)",
+      "Bash(systemctl --user disable openclaw-gateway 2>&1)",
+      "Bash(bash setup.sh 2>&1)",
+      "Bash(npx tsx setup/index.ts --step environment 2>&1)",
+      "Bash(npx tsx setup/index.ts --step container -- --runtime docker 2>&1)",
+      "Bash(npx tsx scripts/apply-skill.ts --init 2>&1)",
+      "Bash(npx tsx scripts/apply-skill.ts .claude/skills/add-telegram 2>&1)",
+      "Bash(npm test 2>&1)",
+      "Bash(npm run build 2>&1)",
+      "Bash(npx tsx setup/index.ts --step mounts -- --empty 2>&1)",
+      "Bash(npx tsx setup/index.ts --step service 2>&1)",
+      "Bash(bash /home/opj1claw/nanoclaw/start-nanoclaw.sh 2>&1)",
+      "Bash(npx tsx -e \"\nconst { registerGroup } = require\\('./setup/register.js'\\);\nregisterGroup\\('tg:8164655724', {\n  name: 'OPJ1',\n  folder: 'telegram_main',\n  trigger: '@Andy',\n  added_at: new Date\\(\\).toISOString\\(\\),\n  requiresTrigger: false,\n  isMain: true,\n}\\);\nconsole.log\\('Registered successfully'\\);\n\" 2>&1)",
+      "Bash(npx tsx -e \"\nimport { setRegisteredGroup } from './src/db.js';\n\nsetRegisteredGroup\\('tg:8164655724', {\n  name: 'OPJ1',\n  folder: 'telegram_main',\n  trigger: '@Andy',\n  added_at: new Date\\(\\).toISOString\\(\\),\n  requiresTrigger: false,\n  isMain: true,\n}\\);\nconsole.log\\('Registered successfully'\\);\n\" 2>&1)",
+      "Bash(mkdir -p /home/opj1claw/nanoclaw/groups/telegram_main/logs && bash /home/opj1claw/nanoclaw/start-nanoclaw.sh 2>&1)",
+      "Bash(sleep 3 && npx tsx setup/index.ts --step verify 2>&1)",
+      "Bash(pgrep -f \"node.*dist/index.js\" && echo \"RUNNING\" || echo \"NOT_RUNNING\")",
+      "Bash(sudo cat /root/.openclaw/workspace/IDENTITY.md 2>&1)",
+      "Bash(sqlite3 ~/nanoclaw/store/messages.db \"SELECT * FROM registered_groups;\")",
+      "Bash(ls /home/opj1claw/nanoclaw/groups/telegram_main/logs/ 2>/dev/null && cat /home/opj1claw/nanoclaw/groups/telegram_main/logs/*.log 2>/dev/null | tail -40)",
+      "Bash(docker exec nanoclaw-telegram-main-1772935734170 cat /workspace/group/CLAUDE.md 2>&1)",
+      "Bash(docker exec nanoclaw-telegram-main-1772935734170 ls -la /workspace/group/ 2>&1)",
+      "Bash(docker inspect nanoclaw-telegram-main-1772935734170 --format '{{json .Mounts}}' 2>&1 | python3 -m json.tool)",
+      "Bash(sqlite3 /home/opj1claw/nanoclaw/store/messages.db \"SELECT * FROM active_sessions;\" 2>&1)",
+      "Bash(sqlite3 /home/opj1claw/nanoclaw/store/messages.db \".tables\")",
+      "Bash(sqlite3 /home/opj1claw/nanoclaw/store/messages.db \"SELECT * FROM sessions;\")",
+      "Bash(sqlite3 /home/opj1claw/nanoclaw/store/messages.db \"DELETE FROM sessions WHERE group_folder = 'telegram_main';\" && echo \"Session gelöscht\")"
+    ]
+  }
+}
