@@ -167,8 +167,82 @@ export class TelegramChannel implements Channel {
 
     this.bot.on('message:photo', (ctx) => storeNonText(ctx, '[Photo]'));
     this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
-    this.bot.on('message:voice', (ctx) => storeNonText(ctx, '[Voice message]'));
-    this.bot.on('message:audio', (ctx) => storeNonText(ctx, '[Audio]'));
+    // Voice and audio: download, transcribe via local Whisper STT, deliver as text
+    const handleVoiceOrAudio = async (ctx: any) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) return;
+
+      const timestamp = new Date(ctx.message.date * 1000).toISOString();
+      const senderName =
+        ctx.from?.first_name ||
+        ctx.from?.username ||
+        ctx.from?.id?.toString() ||
+        'Unknown';
+      const sender = ctx.from?.id?.toString() || '';
+      const msgId = ctx.message.message_id.toString();
+      const chatName =
+        ctx.chat.type === 'private'
+          ? senderName
+          : (ctx.chat as any).title || chatJid;
+      const isGroup =
+        ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+
+      this.opts.onChatMetadata(chatJid, timestamp, chatName, 'telegram', isGroup);
+
+      logger.info({ chatJid, sender: senderName }, 'Voice message received, transcribing...');
+
+      try {
+        // Download audio file from Telegram
+        const file = await ctx.getFile();
+        const fileUrl = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
+        const downloadRes = await fetch(fileUrl);
+        if (!downloadRes.ok) throw new Error(`Telegram file download failed: ${downloadRes.status}`);
+        const audioBuffer = await downloadRes.arrayBuffer();
+
+        // Send to local Whisper STT service
+        const form = new FormData();
+        form.append('file', new Blob([audioBuffer]), file.file_path || 'audio.ogg');
+        form.append('language', 'de');
+
+        const sttRes = await fetch('http://127.0.0.1:8384/transcribe', {
+          method: 'POST',
+          body: form,
+          signal: AbortSignal.timeout(60_000),
+        });
+
+        if (!sttRes.ok) throw new Error(`STT service returned ${sttRes.status}`);
+        const result = await sttRes.json() as { text: string; language: string; duration: number };
+
+        if (!result.text || result.text.trim().length === 0) {
+          await ctx.reply('(Sprachnachricht konnte nicht erkannt werden)');
+          return;
+        }
+
+        const content = result.text.trim();
+        logger.info(
+          { chatJid, sender: senderName, duration: result.duration, textLength: content.length },
+          'Voice message transcribed',
+        );
+
+        // Deliver transcribed text as a normal message
+        this.opts.onMessage(chatJid, {
+          id: msgId,
+          chat_jid: chatJid,
+          sender,
+          sender_name: senderName,
+          content,
+          timestamp,
+          is_from_me: false,
+        });
+      } catch (err: any) {
+        logger.error({ chatJid, err: err.message }, 'Voice transcription failed');
+        await ctx.reply('Spracherkennung vorübergehend nicht verfügbar.').catch(() => {});
+      }
+    };
+
+    this.bot.on('message:voice', handleVoiceOrAudio);
+    this.bot.on('message:audio', handleVoiceOrAudio);
     this.bot.on('message:document', (ctx) => {
       const name = ctx.message.document?.file_name || 'file';
       storeNonText(ctx, `[Document: ${name}]`);
