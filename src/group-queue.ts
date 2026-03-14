@@ -4,6 +4,7 @@ import path from 'path';
 
 import { DATA_DIR, MAX_CONCURRENT_CONTAINERS } from './config.js';
 import { logger } from './logger.js';
+import { readEnvFile } from './env.js';
 
 interface QueuedTask {
   id: string;
@@ -13,6 +14,12 @@ interface QueuedTask {
 
 const MAX_RETRIES = 5;
 const BASE_RETRY_MS = 5000;
+
+// Circuit Breaker: sperrt Gruppen nach zu vielen Fehlern in kurzer Zeit
+const CIRCUIT_BREAKER_THRESHOLD = 15;
+const CIRCUIT_BREAKER_WINDOW_MS = 300_000; // 5 Minuten
+const CIRCUIT_BREAKER_COOLDOWN_MS = 3_600_000; // 1 Stunde Sperre
+const CIRCUIT_BREAKER_ALERT_CHAT_ID = '8164655724';
 
 interface GroupState {
   active: boolean;
@@ -25,6 +32,9 @@ interface GroupState {
   containerName: string | null;
   groupFolder: string | null;
   retryCount: number;
+  circuitBreakerErrors: number;
+  circuitBreakerFirstError: number | null;
+  circuitBreakerTrippedAt: number | null;
 }
 
 export class GroupQueue {
@@ -49,6 +59,9 @@ export class GroupQueue {
         containerName: null,
         groupFolder: null,
         retryCount: 0,
+        circuitBreakerErrors: 0,
+        circuitBreakerFirstError: null,
+        circuitBreakerTrippedAt: null,
       };
       this.groups.set(groupJid, state);
     }
@@ -63,6 +76,8 @@ export class GroupQueue {
     if (this.shuttingDown) return;
 
     const state = this.getGroup(groupJid);
+
+    if (this.isCircuitBreakerActive(groupJid, state)) return;
 
     if (state.active) {
       state.pendingMessages = true;
@@ -91,6 +106,8 @@ export class GroupQueue {
     if (this.shuttingDown) return;
 
     const state = this.getGroup(groupJid);
+
+    if (this.isCircuitBreakerActive(groupJid, state)) return;
 
     // Prevent double-queuing: check both pending and currently-running task
     if (state.runningTaskId === taskId) {
@@ -214,6 +231,8 @@ export class GroupQueue {
         const success = await this.processMessagesFn(groupJid);
         if (success) {
           state.retryCount = 0;
+          state.circuitBreakerErrors = 0;
+          state.circuitBreakerFirstError = null;
         } else {
           this.scheduleRetry(groupJid, state);
         }
@@ -262,6 +281,41 @@ export class GroupQueue {
 
   private scheduleRetry(groupJid: string, state: GroupState): void {
     state.retryCount++;
+
+    // Circuit Breaker: Fehler zählen
+    const now = Date.now();
+    if (state.circuitBreakerFirstError === null) {
+      state.circuitBreakerFirstError = now;
+    }
+    // Fenster abgelaufen → Zähler zurücksetzen
+    if (now - state.circuitBreakerFirstError > CIRCUIT_BREAKER_WINDOW_MS) {
+      state.circuitBreakerErrors = 0;
+      state.circuitBreakerFirstError = now;
+    }
+    state.circuitBreakerErrors++;
+
+    if (state.circuitBreakerErrors >= CIRCUIT_BREAKER_THRESHOLD) {
+      state.circuitBreakerTrippedAt = now;
+      const windowMin = Math.round(
+        (now - state.circuitBreakerFirstError) / 60_000,
+      );
+      logger.error(
+        {
+          groupJid,
+          errors: state.circuitBreakerErrors,
+          windowMin,
+        },
+        'CIRCUIT BREAKER: Gruppe gesperrt für 1h',
+      );
+      this.sendCircuitBreakerAlert(
+        groupJid,
+        state.circuitBreakerErrors,
+        windowMin,
+      );
+      state.retryCount = 0;
+      return;
+    }
+
     if (state.retryCount > MAX_RETRIES) {
       logger.error(
         { groupJid, retryCount: state.retryCount },
@@ -281,6 +335,56 @@ export class GroupQueue {
         this.enqueueMessageCheck(groupJid);
       }
     }, delayMs);
+  }
+
+  private isCircuitBreakerActive(groupJid: string, state: GroupState): boolean {
+    if (state.circuitBreakerTrippedAt === null) return false;
+
+    const elapsed = Date.now() - state.circuitBreakerTrippedAt;
+    if (elapsed < CIRCUIT_BREAKER_COOLDOWN_MS) {
+      logger.debug(
+        {
+          groupJid,
+          remainingMin: Math.round(
+            (CIRCUIT_BREAKER_COOLDOWN_MS - elapsed) / 60_000,
+          ),
+        },
+        'Circuit Breaker aktiv, Nachricht ignoriert',
+      );
+      return true;
+    }
+
+    // Cooldown abgelaufen → zurücksetzen
+    logger.info({ groupJid }, 'Circuit Breaker zurückgesetzt nach Cooldown');
+    state.circuitBreakerTrippedAt = null;
+    state.circuitBreakerErrors = 0;
+    state.circuitBreakerFirstError = null;
+    return false;
+  }
+
+  private sendCircuitBreakerAlert(
+    groupJid: string,
+    errors: number,
+    windowMin: number,
+  ): void {
+    const text = `⚠️ CIRCUIT BREAKER: Gruppe ${groupJid} nach ${errors} Fehlern in ${windowMin} Min gesperrt. Automatische Entsperrung in 1 Stunde.`;
+    const envVars = readEnvFile(['TELEGRAM_BOT_TOKEN']);
+    const token =
+      process.env.TELEGRAM_BOT_TOKEN || envVars.TELEGRAM_BOT_TOKEN || '';
+    if (!token) {
+      logger.warn(
+        'Circuit Breaker: Kein TELEGRAM_BOT_TOKEN, kann Alert nicht senden',
+      );
+      return;
+    }
+    const url = `https://api.telegram.org/bot${token}/sendMessage`;
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: CIRCUIT_BREAKER_ALERT_CHAT_ID, text }),
+    }).catch((err) => {
+      logger.error({ err }, 'Circuit Breaker: Telegram-Alert fehlgeschlagen');
+    });
   }
 
   private drainGroup(groupJid: string): void {
