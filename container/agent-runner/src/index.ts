@@ -19,8 +19,18 @@ import path from 'path';
 import { query, HookCallback, PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 
+interface ImageContentBlock {
+  type: 'image';
+  source: {
+    type: 'base64';
+    media_type: 'image/jpeg' | 'image/png' | 'image/webp';
+    data: string;
+  };
+}
+
 interface ContainerInput {
   prompt: string;
+  images?: ImageContentBlock[];
   sessionId?: string;
   groupFolder: string;
   chatJid: string;
@@ -47,9 +57,13 @@ interface SessionsIndex {
   entries: SessionEntry[];
 }
 
+type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } };
+
 interface SDKUserMessage {
   type: 'user';
-  message: { role: 'user'; content: string };
+  message: { role: 'user'; content: string | ContentBlock[] };
   parent_tool_use_id: null;
   session_id: string;
 }
@@ -67,10 +81,22 @@ class MessageStream {
   private waiting: (() => void) | null = null;
   private done = false;
 
-  push(text: string): void {
+  push(text: string, images?: ImageContentBlock[]): void {
+    let content: string | ContentBlock[];
+    if (images && images.length > 0) {
+      content = [
+        ...images.map((img) => ({
+          type: 'image' as const,
+          source: img.source,
+        })),
+        { type: 'text' as const, text },
+      ];
+    } else {
+      content = text;
+    }
     this.queue.push({
       type: 'user',
-      message: { role: 'user', content: text },
+      message: { role: 'user', content },
       parent_tool_use_id: null,
       session_id: '',
     });
@@ -338,7 +364,7 @@ async function runQuery(
   resumeAt?: string,
 ): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
   const stream = new MessageStream();
-  stream.push(prompt);
+  stream.push(prompt, containerInput.images);
 
   // Poll IPC for follow-up messages and _close sentinel during the query
   let ipcPolling = true;

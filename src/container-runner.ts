@@ -33,8 +33,18 @@ import { RegisteredGroup } from './types.js';
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 
+export interface ImageContentBlock {
+  type: 'image';
+  source: {
+    type: 'base64';
+    media_type: 'image/jpeg' | 'image/png' | 'image/webp';
+    data: string;
+  };
+}
+
 export interface ContainerInput {
   prompt: string;
+  images?: ImageContentBlock[];
   sessionId?: string;
   groupFolder: string;
   chatJid: string;
