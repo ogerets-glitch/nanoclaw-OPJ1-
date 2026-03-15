@@ -156,6 +156,8 @@ function createMediaCtx(overrides: {
       ...(overrides.extra || {}),
     },
     me: { username: 'andy_ai_bot' },
+    reply: vi.fn().mockResolvedValue(undefined),
+    getFile: vi.fn().mockRejectedValue(new Error('no file in test')),
   };
 }
 
@@ -588,7 +590,7 @@ describe('TelegramChannel', () => {
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
 
-      const ctx = createMediaCtx({});
+      const ctx = createMediaCtx({ extra: { voice: { file_id: 'v1' } } });
       await triggerMediaMessage('message:voice', ctx);
 
       expect(opts.onMessage).toHaveBeenCalledWith(

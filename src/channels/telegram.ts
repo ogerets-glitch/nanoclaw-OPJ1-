@@ -269,6 +269,17 @@ export class TelegramChannel implements Channel {
         await ctx
           .reply('Spracherkennung vorübergehend nicht verfügbar.')
           .catch(() => {});
+        // Still store the message so it's not silently lost
+        const placeholder = ctx.message?.voice ? '[Voice message]' : '[Audio]';
+        this.opts.onMessage(chatJid, {
+          id: msgId,
+          chat_jid: chatJid,
+          sender,
+          sender_name: senderName,
+          content: placeholder,
+          timestamp,
+          is_from_me: false,
+        });
       }
     };
 
