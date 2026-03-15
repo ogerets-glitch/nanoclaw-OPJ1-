@@ -384,7 +384,9 @@ export class TelegramChannel implements Channel {
       const doc = ctx.message.document;
       const fileName = doc?.file_name || 'file';
       const mimeType = doc?.mime_type || '';
-      const isPdf = mimeType === 'application/pdf' || fileName.toLowerCase().endsWith('.pdf');
+      const isPdf =
+        mimeType === 'application/pdf' ||
+        fileName.toLowerCase().endsWith('.pdf');
 
       if (!isPdf) {
         storeNonText(ctx, `[Document: ${fileName}]`);
@@ -417,7 +419,9 @@ export class TelegramChannel implements Channel {
         const fileUrl = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
         const downloadRes = await fetch(fileUrl);
         if (!downloadRes.ok)
-          throw new Error(`Telegram file download failed: ${downloadRes.status}`);
+          throw new Error(
+            `Telegram file download failed: ${downloadRes.status}`,
+          );
         const pdfBuffer = Buffer.from(await downloadRes.arrayBuffer());
 
         // Save to group attachments directory
@@ -431,7 +435,12 @@ export class TelegramChannel implements Channel {
         fs.writeFileSync(destPath, pdfBuffer);
 
         logger.info(
-          { chatJid, sender: senderName, fileName: safeName, size: pdfBuffer.length },
+          {
+            chatJid,
+            sender: senderName,
+            fileName: safeName,
+            size: pdfBuffer.length,
+          },
           'Downloaded PDF attachment',
         );
 

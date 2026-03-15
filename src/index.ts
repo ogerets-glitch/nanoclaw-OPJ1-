@@ -63,7 +63,12 @@ import {
   isSessionCommandAllowed,
 } from './session-commands.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { Channel, ImageAttachment, NewMessage, RegisteredGroup } from './types.js';
+import {
+  Channel,
+  ImageAttachment,
+  NewMessage,
+  RegisteredGroup,
+} from './types.js';
 import { logger } from './logger.js';
 
 // Re-export for backwards compatibility during refactor
