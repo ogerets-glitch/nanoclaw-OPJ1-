@@ -36,9 +36,7 @@ export async function downloadImage(
  * Resize an image buffer so its longest side is at most MAX_DIMENSION,
  * convert to JPEG, and return base64-encoded data.
  */
-export async function processImage(
-  buffer: Buffer,
-): Promise<ProcessedImage> {
+export async function processImage(buffer: Buffer): Promise<ProcessedImage> {
   const originalSize = buffer.length;
 
   const image = sharp(buffer);
@@ -78,7 +76,10 @@ export async function downloadAndProcessImage(
   if (savePath) {
     fs.mkdirSync(path.dirname(savePath), { recursive: true });
     fs.writeFileSync(savePath, Buffer.from(processed.base64, 'base64'));
-    logger.debug({ savePath, size: processed.base64.length }, 'Image saved to workspace');
+    logger.debug(
+      { savePath, size: processed.base64.length },
+      'Image saved to workspace',
+    );
   }
 
   logger.info(
