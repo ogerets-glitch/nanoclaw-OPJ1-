@@ -188,21 +188,37 @@ export class TelegramChannel implements Channel {
       const isGroup =
         ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
 
-      this.opts.onChatMetadata(chatJid, timestamp, chatName, 'telegram', isGroup);
+      this.opts.onChatMetadata(
+        chatJid,
+        timestamp,
+        chatName,
+        'telegram',
+        isGroup,
+      );
 
-      logger.info({ chatJid, sender: senderName }, 'Voice message received, transcribing...');
+      logger.info(
+        { chatJid, sender: senderName },
+        'Voice message received, transcribing...',
+      );
 
       try {
         // Download audio file from Telegram
         const file = await ctx.getFile();
         const fileUrl = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
         const downloadRes = await fetch(fileUrl);
-        if (!downloadRes.ok) throw new Error(`Telegram file download failed: ${downloadRes.status}`);
+        if (!downloadRes.ok)
+          throw new Error(
+            `Telegram file download failed: ${downloadRes.status}`,
+          );
         const audioBuffer = await downloadRes.arrayBuffer();
 
         // Send to local Whisper STT service
         const form = new FormData();
-        form.append('file', new Blob([audioBuffer]), file.file_path || 'audio.ogg');
+        form.append(
+          'file',
+          new Blob([audioBuffer]),
+          file.file_path || 'audio.ogg',
+        );
         form.append('language', 'de');
 
         const sttRes = await fetch('http://127.0.0.1:8384/transcribe', {
@@ -211,8 +227,13 @@ export class TelegramChannel implements Channel {
           signal: AbortSignal.timeout(60_000),
         });
 
-        if (!sttRes.ok) throw new Error(`STT service returned ${sttRes.status}`);
-        const result = await sttRes.json() as { text: string; language: string; duration: number };
+        if (!sttRes.ok)
+          throw new Error(`STT service returned ${sttRes.status}`);
+        const result = (await sttRes.json()) as {
+          text: string;
+          language: string;
+          duration: number;
+        };
 
         if (!result.text || result.text.trim().length === 0) {
           await ctx.reply('(Sprachnachricht konnte nicht erkannt werden)');
@@ -221,7 +242,12 @@ export class TelegramChannel implements Channel {
 
         const content = result.text.trim();
         logger.info(
-          { chatJid, sender: senderName, duration: result.duration, textLength: content.length },
+          {
+            chatJid,
+            sender: senderName,
+            duration: result.duration,
+            textLength: content.length,
+          },
           'Voice message transcribed',
         );
 
@@ -236,8 +262,13 @@ export class TelegramChannel implements Channel {
           is_from_me: false,
         });
       } catch (err: any) {
-        logger.error({ chatJid, err: err.message }, 'Voice transcription failed');
-        await ctx.reply('Spracherkennung vorübergehend nicht verfügbar.').catch(() => {});
+        logger.error(
+          { chatJid, err: err.message },
+          'Voice transcription failed',
+        );
+        await ctx
+          .reply('Spracherkennung vorübergehend nicht verfügbar.')
+          .catch(() => {});
       }
     };
 

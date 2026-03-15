@@ -27,7 +27,31 @@
       "Bash(sqlite3 /home/opj1claw/nanoclaw/store/messages.db \"SELECT * FROM active_sessions;\" 2>&1)",
       "Bash(sqlite3 /home/opj1claw/nanoclaw/store/messages.db \".tables\")",
       "Bash(sqlite3 /home/opj1claw/nanoclaw/store/messages.db \"SELECT * FROM sessions;\")",
-      "Bash(sqlite3 /home/opj1claw/nanoclaw/store/messages.db \"DELETE FROM sessions WHERE group_folder = 'telegram_main';\" && echo \"Session gelöscht\")"
+      "Bash(sqlite3 /home/opj1claw/nanoclaw/store/messages.db \"DELETE FROM sessions WHERE group_folder = 'telegram_main';\" && echo \"Session gelöscht\")",
+      "Bash(journalctl -u opj1-nanoclaw.service --since \"10 min ago\" --no-pager 2>&1 | grep -i -E \"philosoph|skill|mount|shared\" | head -30)",
+      "Bash(sqlite3 /home/opj1claw/nanoclaw/nanoclaw.db \"SELECT name, folder, container_config FROM groups;\" 2>/dev/null)",
+      "Bash(find /home/opj1claw/nanoclaw -name \"*.db\" -o -name \"*.sqlite\" 2>/dev/null | head -5)",
+      "Bash(sqlite3 /home/opj1claw/nanoclaw/nanoclaw.db \".schema\" 2>&1 | head -40)",
+      "Bash(sqlite3 /home/opj1claw/nanoclaw/store/messages.db \"SELECT jid, name, folder, container_config FROM registered_groups;\" 2>&1)",
+      "Bash(systemctl --user restart opj1-nanoclaw.service 2>&1 || sudo systemctl restart opj1-nanoclaw.service 2>&1)",
+      "Bash(systemctl list-units:*)",
+      "Bash(systemctl --user list-units --all)",
+      "Read(//etc/systemd/system/**)",
+      "Read(//root/Library/**)",
+      "Bash(sudo systemctl:*)",
+      "Bash(sleep 5 && journalctl -u opj1-nanoclaw.service --since \"30 sec ago\" --no-pager 2>&1 | grep -i -E \"telegram|connect|skill|error\" | head -15)",
+      "Bash(journalctl -u opj1-nanoclaw.service --since \"5 min ago\" --no-pager 2>&1)",
+      "Bash(docker ps:*)",
+      "Bash(journalctl -u opj1-nanoclaw.service --since \"2 min ago\" --no-pager 2>&1)",
+      "Bash(sqlite3 /home/opj1claw/nanoclaw/store/messages.db \"SELECT timestamp, sender, content FROM messages WHERE chat_jid='tg:8164655724' ORDER BY timestamp DESC LIMIT 10;\" 2>&1)",
+      "Bash(sqlite3 /home/opj1claw/nanoclaw/store/messages.db \"SELECT timestamp, sender, content FROM messages WHERE chat_jid='tg:8164655724' AND content LIKE '%philosoph%' ORDER BY timestamp DESC LIMIT 10;\" 2>&1)",
+      "Bash(journalctl -u opj1-nanoclaw.service --since \"30 min ago\" --no-pager 2>&1 | grep -i \"philosoph\")",
+      "Bash(sqlite3 /home/opj1claw/nanoclaw/store/messages.db \"SELECT timestamp, sender, content FROM messages WHERE chat_jid='tg:8164655724' AND \\(content LIKE '%philosoph%' OR content LIKE '%/philosoph%' OR content LIKE '%lesung%' OR content LIKE '%Skill%'\\) ORDER BY timestamp DESC LIMIT 10;\" 2>&1)",
+      "Bash(sqlite3 /home/opj1claw/nanoclaw/store/messages.db \"SELECT jid, name, folder, trigger_pattern, requires_trigger, is_main FROM registered_groups;\" 2>&1)",
+      "Bash(sqlite3 /home/opj1claw/nanoclaw/store/messages.db \"SELECT timestamp, sender, content FROM messages WHERE chat_jid='tg:8164655724' ORDER BY timestamp DESC LIMIT 20;\" 2>&1)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ]
   }
 }
