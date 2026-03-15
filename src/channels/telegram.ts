@@ -86,6 +86,24 @@ export class TelegramChannel implements Channel {
     });
 
     this.bot.on('message:text', async (ctx) => {
+      // Voice mode toggle (without slash — Telegram filters slash commands)
+      const trimmed = ctx.message.text.trim().toLowerCase();
+      if (trimmed === 'voice on' || trimmed === 'voice off' || trimmed === 'voice') {
+        const voicePath = path.join(process.cwd(), 'data', '.voice_mode');
+        if (trimmed === 'voice on') {
+          fs.mkdirSync(path.dirname(voicePath), { recursive: true });
+          fs.writeFileSync(voicePath, '');
+          await ctx.reply('🔊 Voice-Modus aktiviert. Ich antworte jetzt auch als Sprachnachricht.');
+        } else if (trimmed === 'voice off') {
+          try { fs.unlinkSync(voicePath); } catch {}
+          await ctx.reply('🔇 Voice-Modus deaktiviert.');
+        } else {
+          const active = fs.existsSync(voicePath);
+          await ctx.reply(active ? '🔊 Voice-Modus ist an.' : '🔇 Voice-Modus ist aus.');
+        }
+        return;
+      }
+
       // Skip commands
       if (ctx.message.text.startsWith('/')) return;
 
@@ -516,6 +534,54 @@ export class TelegramChannel implements Channel {
       logger.info({ jid, length: text.length }, 'Telegram message sent');
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Telegram message');
+    }
+  }
+
+  async sendVoiceReply(chatId: string, text: string): Promise<void> {
+    try {
+      // Clean text: remove markdown, URLs, emojis
+      let cleaned = text
+        .replace(/```[\s\S]*?```/g, '')
+        .replace(/`[^`]+`/g, '')
+        .replace(/https?:\/\/\S+/g, '')
+        .replace(/\*{1,3}/g, '')
+        .replace(/^#{1,6}\s+/gm, '')
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+        .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
+        .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2702}-\u{27B0}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{FE00}-\u{FE0F}\u{200D}]/gu, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      if (cleaned.length < 10) return;
+      if (cleaned.length > 4000) cleaned = cleaned.slice(0, 3997) + '...';
+
+      // Call Piper TTS
+      const ttsRes = await fetch('http://127.0.0.1:8385/synthesize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: cleaned }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!ttsRes.ok) throw new Error(`TTS returned ${ttsRes.status}`);
+      const audioBuffer = Buffer.from(await ttsRes.arrayBuffer());
+
+      // Send via Telegram sendVoice API
+      const formData = new FormData();
+      formData.append('chat_id', chatId);
+      formData.append('voice', new Blob([audioBuffer], { type: 'audio/ogg' }), 'voice.ogg');
+
+      const sendRes = await fetch(
+        `https://api.telegram.org/bot${this.botToken}/sendVoice`,
+        { method: 'POST', body: formData },
+      );
+      if (!sendRes.ok) {
+        const body = await sendRes.text();
+        throw new Error(`sendVoice failed: ${sendRes.status} ${body}`);
+      }
+
+      logger.info({ chatId, textLength: cleaned.length }, 'Voice reply sent');
+    } catch (err: any) {
+      logger.error({ chatId, err: err.message }, 'Voice reply failed');
     }
   }
 

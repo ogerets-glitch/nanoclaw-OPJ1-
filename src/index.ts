@@ -324,6 +324,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         if (text) {
           await channel.sendMessage(chatJid, text);
           outputSentToUser = true;
+
+          // Voice mode: send reply as voice message if active
+          const voiceModeFile = path.join(process.cwd(), 'data', '.voice_mode');
+          if (fs.existsSync(voiceModeFile)) {
+            const chatIdMatch = chatJid.match(/^tg:(\d+)$/);
+            if (chatIdMatch && 'sendVoiceReply' in channel) {
+              (channel as any).sendVoiceReply(chatIdMatch[1], text).catch((err: any) => {
+                logger.error({ err: err.message }, 'Voice reply failed');
+              });
+            }
+          }
         }
         // Only reset idle timer on actual results, not session-update markers (result: null)
         resetIdleTimer();
