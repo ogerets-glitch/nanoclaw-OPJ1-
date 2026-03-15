@@ -63,11 +63,37 @@ import {
   isSessionCommandAllowed,
 } from './session-commands.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { Channel, NewMessage, RegisteredGroup } from './types.js';
+import { Channel, ImageAttachment, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
+
+// In-memory cache for image attachments (keyed by "chatJid:messageId").
+// Images are stored here on ingest and consumed when processGroupMessages runs.
+const imageCache = new Map<string, ImageAttachment[]>();
+
+function cacheImages(msg: NewMessage): void {
+  if (msg.images && msg.images.length > 0) {
+    imageCache.set(`${msg.chat_jid}:${msg.id}`, msg.images);
+  }
+}
+
+function reattachImages(messages: NewMessage[]): void {
+  for (const msg of messages) {
+    const key = `${msg.chat_jid}:${msg.id}`;
+    const cached = imageCache.get(key);
+    if (cached) {
+      msg.images = cached;
+    }
+  }
+}
+
+function consumeImages(messages: NewMessage[]): void {
+  for (const msg of messages) {
+    imageCache.delete(`${msg.chat_jid}:${msg.id}`);
+  }
+}
 
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
@@ -174,6 +200,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   if (missedMessages.length === 0) return true;
 
+  // Reattach cached image attachments (lost during DB roundtrip)
+  reattachImages(missedMessages);
+
   // --- Session command interception (before trigger check) ---
   const cmdResult = await handleSessionCommand({
     missedMessages,
@@ -244,7 +273,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   saveState();
 
   logger.info(
-    { group: group.name, messageCount: missedMessages.length, imageCount: images.length },
+    {
+      group: group.name,
+      messageCount: missedMessages.length,
+      imageCount: images.length,
+    },
     'Processing messages',
   );
 
@@ -266,32 +299,41 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
-  const output = await runAgent(group, prompt, chatJid, async (result) => {
-    // Streaming output callback — called for each agent result
-    if (result.result) {
-      const raw =
-        typeof result.result === 'string'
-          ? result.result
-          : JSON.stringify(result.result);
-      // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-      const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
-      logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
-      if (text) {
-        await channel.sendMessage(chatJid, text);
-        outputSentToUser = true;
+  const output = await runAgent(
+    group,
+    prompt,
+    chatJid,
+    async (result) => {
+      // Streaming output callback — called for each agent result
+      if (result.result) {
+        const raw =
+          typeof result.result === 'string'
+            ? result.result
+            : JSON.stringify(result.result);
+        // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
+        const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+        logger.info(
+          { group: group.name },
+          `Agent output: ${raw.slice(0, 200)}`,
+        );
+        if (text) {
+          await channel.sendMessage(chatJid, text);
+          outputSentToUser = true;
+        }
+        // Only reset idle timer on actual results, not session-update markers (result: null)
+        resetIdleTimer();
       }
-      // Only reset idle timer on actual results, not session-update markers (result: null)
-      resetIdleTimer();
-    }
 
-    if (result.status === 'success') {
-      queue.notifyIdle(chatJid);
-    }
+      if (result.status === 'success') {
+        queue.notifyIdle(chatJid);
+      }
 
-    if (result.status === 'error') {
-      hadError = true;
-    }
-  }, images);
+      if (result.status === 'error') {
+        hadError = true;
+      }
+    },
+    images,
+  );
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
@@ -316,6 +358,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     return false;
   }
 
+  // Images consumed successfully — free cache memory
+  consumeImages(missedMessages);
   return true;
 }
 
@@ -648,6 +692,7 @@ async function main(): Promise<void> {
         }
       }
       storeMessage(msg);
+      cacheImages(msg);
     },
     onChatMetadata: (
       chatJid: string,
