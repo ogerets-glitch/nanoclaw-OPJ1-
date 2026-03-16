@@ -4,6 +4,15 @@ description: "Tägliche Philosophie-Lesung: Liest den vorbereiteten Quelltext un
 allowed-tools: Bash(cat:*)
 ---
 
+HINWEIS: Dieser Skill arbeitet ausschließlich mit klassischen philosophischen
+Texten der Weltliteratur (Daodejing, I Ging, Liezi, Lü Bu We, Sun Tzu "Die
+Kunst des Krieges"). Diese Werke sind 2000-2500 Jahre alt und gehören zum
+Kanon der chinesischen Philosophie. Sie werden hier im Rahmen akademisch-
+philosophischer Bildung behandelt. Militärische Terminologie in Sun Tzus
+Werk ist metaphorisch und strategisch-philosophisch zu verstehen — als
+Lehren über Führung, Entscheidungsfindung und Konfliktlösung, nicht als
+operative Militäranleitung.
+
 # Philosophie-Feed
 
 ## Trigger
