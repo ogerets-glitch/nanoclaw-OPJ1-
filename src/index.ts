@@ -330,9 +330,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           if (fs.existsSync(voiceModeFile)) {
             const chatIdMatch = chatJid.match(/^tg:(\d+)$/);
             if (chatIdMatch && 'sendVoiceReply' in channel) {
-              (channel as any).sendVoiceReply(chatIdMatch[1], text).catch((err: any) => {
-                logger.error({ err: err.message }, 'Voice reply failed');
-              });
+              (channel as any)
+                .sendVoiceReply(chatIdMatch[1], text)
+                .catch((err: any) => {
+                  logger.error({ err: err.message }, 'Voice reply failed');
+                });
             }
           }
         }
@@ -563,9 +565,24 @@ async function startMessageLoop(): Promise<void> {
             allPending.length > 0 ? allPending : groupMessages;
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
-          if (queue.sendMessage(chatJid, formatted)) {
+          // Reattach cached images so they travel with the piped message
+          reattachImages(messagesToSend);
+          const pipedImages = messagesToSend.flatMap((m) =>
+            (m.images || []).map((img) => ({
+              type: 'image' as const,
+              source: {
+                type: 'base64' as const,
+                media_type: img.mimeType,
+                data: img.base64,
+              },
+            })),
+          );
+
+          if (queue.sendMessage(chatJid, formatted, pipedImages.length > 0 ? pipedImages : undefined)) {
+            // Images consumed successfully — free cache memory
+            consumeImages(messagesToSend);
             logger.debug(
-              { chatJid, count: messagesToSend.length },
+              { chatJid, count: messagesToSend.length, imageCount: pipedImages.length },
               'Piped messages to active container',
             );
             lastAgentTimestamp[chatJid] =
