@@ -26,6 +26,7 @@ import {
   stopContainer,
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
+import { readEnvFile } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
@@ -246,6 +247,14 @@ function buildContainerArgs(
     args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
   } else {
     args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+  }
+
+  // CUSTOM: Calendar iCal URL for OPJ1 – may need manual merge on upstream updates
+  const calendarUrl =
+    process.env.CALENDAR_ICAL_URL ||
+    readEnvFile(['CALENDAR_ICAL_URL']).CALENDAR_ICAL_URL;
+  if (calendarUrl) {
+    args.push('-e', `CALENDAR_ICAL_URL=${calendarUrl}`);
   }
 
   // Runtime-specific args for host gateway resolution
