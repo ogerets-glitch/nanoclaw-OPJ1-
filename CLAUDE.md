@@ -82,3 +82,13 @@ git add -A && git commit -m "beschreibung" && git push origin main
 git fetch upstream && git merge upstream/main
 ```
 **ACHTUNG:** Nach upstream-Updates prüfen, ob der Circuit Breaker in `dist/group-queue.js` noch vorhanden ist. Falls überschrieben: in `src/group-queue.ts` neu einbauen und `npm run build`.
+
+## OpenBrain-Regeln
+- Bei add_memory IMMER setzen: author="opj1", visibility=["global"]
+  (oder spezifischer wenn Inhalt nur für bestimmte Agents relevant ist)
+- Bei search_memory IMMER setzen: agent="opj1"
+- Wenn ein OpenBrain-Suchergebnis dir konkret weitergeholfen hat,
+  rufe reinforce_memory(id) auf
+- Kategorien: fact (Fakten), learning (was funktioniert hat),
+  error (was schiefging), preference (Olivers Vorlieben/Korrekturen)
+- Rechtsfragen → Rechtsrecherche-MCP, nicht OpenBrain
