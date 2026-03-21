@@ -613,19 +613,47 @@ describe('TelegramChannel', () => {
       );
     });
 
-    it('stores document with filename', async () => {
+    it('stores PDF document with download attempt and fallback', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
 
       const ctx = createMediaCtx({
-        extra: { document: { file_name: 'report.pdf' } },
+        extra: {
+          document: {
+            file_name: 'report.pdf',
+            file_id: 'abc',
+            mime_type: 'application/pdf',
+          },
+        },
       });
       await triggerMediaMessage('message:document', ctx);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
         'tg:100200300',
-        expect.objectContaining({ content: '[Document: report.pdf]' }),
+        expect.objectContaining({ content: '[PDF: report.pdf]' }),
+      );
+    });
+
+    it('stores non-PDF document with filename', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const ctx = createMediaCtx({
+        extra: {
+          document: {
+            file_name: 'notes.docx',
+            mime_type:
+              'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          },
+        },
+      });
+      await triggerMediaMessage('message:document', ctx);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({ content: '[Document: notes.docx]' }),
       );
     });
 
@@ -659,17 +687,41 @@ describe('TelegramChannel', () => {
       );
     });
 
-    it('stores location with placeholder', async () => {
+    it('extracts location coordinates', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
 
-      const ctx = createMediaCtx({});
+      const ctx = createMediaCtx({
+        extra: { location: { latitude: 52.52, longitude: 13.405 } },
+      });
       await triggerMediaMessage('message:location', ctx);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
         'tg:100200300',
-        expect.objectContaining({ content: '[Location]' }),
+        expect.objectContaining({
+          content: '📍 Standort geteilt: 52.52°N, 13.405°E',
+          location: { latitude: 52.52, longitude: 13.405 },
+        }),
+      );
+    });
+
+    it('formats southern/western coordinates correctly', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const ctx = createMediaCtx({
+        extra: { location: { latitude: -33.8688, longitude: -151.2093 } },
+      });
+      await triggerMediaMessage('message:location', ctx);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({
+          content: '📍 Standort geteilt: 33.8688°S, 151.2093°W',
+          location: { latitude: -33.8688, longitude: -151.2093 },
+        }),
       );
     });
 
