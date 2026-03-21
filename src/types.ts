@@ -57,6 +57,7 @@ export interface NewMessage {
   is_from_me?: boolean;
   is_bot_message?: boolean;
   images?: ImageAttachment[];
+  location?: { latitude: number; longitude: number };
 }
 
 export interface ScheduledTask {

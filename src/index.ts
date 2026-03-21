@@ -578,11 +578,21 @@ async function startMessageLoop(): Promise<void> {
             })),
           );
 
-          if (queue.sendMessage(chatJid, formatted, pipedImages.length > 0 ? pipedImages : undefined)) {
+          if (
+            queue.sendMessage(
+              chatJid,
+              formatted,
+              pipedImages.length > 0 ? pipedImages : undefined,
+            )
+          ) {
             // Images consumed successfully — free cache memory
             consumeImages(messagesToSend);
             logger.debug(
-              { chatJid, count: messagesToSend.length, imageCount: pipedImages.length },
+              {
+                chatJid,
+                count: messagesToSend.length,
+                imageCount: pipedImages.length,
+              },
               'Piped messages to active container',
             );
             lastAgentTimestamp[chatJid] =

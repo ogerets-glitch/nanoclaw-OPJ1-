@@ -1,5 +1,7 @@
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import https from 'https';
+import os from 'os';
 import path from 'path';
 
 import { Api, Bot } from 'grammy';
@@ -88,18 +90,28 @@ export class TelegramChannel implements Channel {
     this.bot.on('message:text', async (ctx) => {
       // Voice mode toggle (without slash — Telegram filters slash commands)
       const trimmed = ctx.message.text.trim().toLowerCase();
-      if (trimmed === 'voice on' || trimmed === 'voice off' || trimmed === 'voice') {
+      if (
+        trimmed === 'voice on' ||
+        trimmed === 'voice off' ||
+        trimmed === 'voice'
+      ) {
         const voicePath = path.join(process.cwd(), 'data', '.voice_mode');
         if (trimmed === 'voice on') {
           fs.mkdirSync(path.dirname(voicePath), { recursive: true });
           fs.writeFileSync(voicePath, '');
-          await ctx.reply('🔊 Voice-Modus aktiviert. Ich antworte jetzt auch als Sprachnachricht.');
+          await ctx.reply(
+            '🔊 Voice-Modus aktiviert. Ich antworte jetzt auch als Sprachnachricht.',
+          );
         } else if (trimmed === 'voice off') {
-          try { fs.unlinkSync(voicePath); } catch {}
+          try {
+            fs.unlinkSync(voicePath);
+          } catch {}
           await ctx.reply('🔇 Voice-Modus deaktiviert.');
         } else {
           const active = fs.existsSync(voicePath);
-          await ctx.reply(active ? '🔊 Voice-Modus ist an.' : '🔇 Voice-Modus ist aus.');
+          await ctx.reply(
+            active ? '🔊 Voice-Modus ist an.' : '🔇 Voice-Modus ist aus.',
+          );
         }
         return;
       }
@@ -402,11 +414,30 @@ export class TelegramChannel implements Channel {
       const doc = ctx.message.document;
       const fileName = doc?.file_name || 'file';
       const mimeType = doc?.mime_type || '';
-      const isPdf =
-        mimeType === 'application/pdf' ||
-        fileName.toLowerCase().endsWith('.pdf');
+      const ext = path.extname(fileName).toLowerCase();
 
-      if (!isPdf) {
+      // Categorise the incoming document
+      const isPdf = mimeType === 'application/pdf' || ext === '.pdf';
+      const officeExts = new Set([
+        '.docx',
+        '.xlsx',
+        '.pptx',
+        '.odt',
+        '.ods',
+        '.odp',
+      ]);
+      const isOffice = officeExts.has(ext);
+      const textExts = new Set([
+        '.txt',
+        '.md',
+        '.csv',
+        '.json',
+        '.xml',
+        '.html',
+      ]);
+      const isText = textExts.has(ext);
+
+      if (!isPdf && !isOffice && !isText) {
         storeNonText(ctx, `[Document: ${fileName}]`);
         return;
       }
@@ -432,7 +463,7 @@ export class TelegramChannel implements Channel {
       );
 
       try {
-        // Download PDF from Telegram
+        // Download file from Telegram
         const file = await ctx.api.getFile(doc!.file_id);
         const fileUrl = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
         const downloadRes = await fetch(fileUrl);
@@ -440,7 +471,7 @@ export class TelegramChannel implements Channel {
           throw new Error(
             `Telegram file download failed: ${downloadRes.status}`,
           );
-        const pdfBuffer = Buffer.from(await downloadRes.arrayBuffer());
+        const fileBuffer = Buffer.from(await downloadRes.arrayBuffer());
 
         // Save to group attachments directory
         const groupDir = resolveGroupFolderPath(group.folder);
@@ -449,17 +480,63 @@ export class TelegramChannel implements Channel {
 
         // Sanitize filename
         const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
-        const destPath = path.join(attachDir, safeName);
-        fs.writeFileSync(destPath, pdfBuffer);
+
+        let finalName: string;
+        let label: string;
+
+        if (isPdf) {
+          // --- PDF: save directly (existing behaviour) ---
+          const destPath = path.join(attachDir, safeName);
+          fs.writeFileSync(destPath, fileBuffer);
+          finalName = safeName;
+          label = 'PDF';
+        } else if (isOffice) {
+          // --- Office document: convert to PDF via LibreOffice ---
+          const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lo-'));
+          const tmpSrc = path.join(tmpDir, safeName);
+          fs.writeFileSync(tmpSrc, fileBuffer);
+
+          try {
+            execFileSync(
+              'libreoffice',
+              ['--headless', '--convert-to', 'pdf', tmpSrc, '--outdir', tmpDir],
+              { timeout: 30_000, stdio: 'pipe' },
+            );
+
+            const pdfName = safeName.replace(/\.[^.]+$/, '') + '.pdf';
+            const tmpPdf = path.join(tmpDir, pdfName);
+
+            if (!fs.existsSync(tmpPdf)) {
+              throw new Error(`LibreOffice produced no output for ${safeName}`);
+            }
+
+            const pdfBuffer = fs.readFileSync(tmpPdf);
+            const destPath = path.join(attachDir, pdfName);
+            fs.writeFileSync(destPath, pdfBuffer);
+            finalName = pdfName;
+            label = 'Office→PDF';
+          } finally {
+            // Clean up temp files
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+          }
+        } else {
+          // --- Text file: save directly ---
+          const destPath = path.join(attachDir, safeName);
+          fs.writeFileSync(destPath, fileBuffer);
+          finalName = safeName;
+          label = 'Text';
+        }
 
         logger.info(
           {
             chatJid,
             sender: senderName,
-            fileName: safeName,
-            size: pdfBuffer.length,
+            fileName: finalName,
+            originalName: safeName,
+            type: label,
+            size: fileBuffer.length,
           },
-          'Downloaded PDF attachment',
+          `Downloaded ${label} attachment`,
         );
 
         this.opts.onMessage(chatJid, {
@@ -467,23 +544,67 @@ export class TelegramChannel implements Channel {
           chat_jid: chatJid,
           sender,
           sender_name: senderName,
-          content: `[PDF attached: attachments/${safeName}]${caption}`,
+          content: `[${label} attached: attachments/${finalName}]${caption}`,
           timestamp,
           is_from_me: false,
         });
       } catch (err: any) {
         logger.error(
           { chatJid, err: err.message },
-          'Failed to download PDF attachment',
+          `Failed to process document: ${fileName}`,
         );
-        storeNonText(ctx, `[PDF: ${fileName}]`);
+        storeNonText(ctx, `[Document: ${fileName}]`);
       }
     });
     this.bot.on('message:sticker', (ctx) => {
       const emoji = ctx.message.sticker?.emoji || '';
       storeNonText(ctx, `[Sticker ${emoji}]`);
     });
-    this.bot.on('message:location', (ctx) => storeNonText(ctx, '[Location]'));
+    this.bot.on('message:location', (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) return;
+
+      const lat = ctx.message.location.latitude;
+      const lon = ctx.message.location.longitude;
+      const timestamp = new Date(ctx.message.date * 1000).toISOString();
+      const senderName =
+        ctx.from?.first_name ||
+        ctx.from?.username ||
+        ctx.from?.id.toString() ||
+        'Unknown';
+      const sender = ctx.from?.id.toString() || '';
+      const msgId = ctx.message.message_id.toString();
+
+      const isGroup =
+        ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      this.opts.onChatMetadata(
+        chatJid,
+        timestamp,
+        undefined,
+        'telegram',
+        isGroup,
+      );
+
+      const latLabel = lat >= 0 ? `${lat}°N` : `${-lat}°S`;
+      const lonLabel = lon >= 0 ? `${lon}°E` : `${-lon}°W`;
+
+      this.opts.onMessage(chatJid, {
+        id: msgId,
+        chat_jid: chatJid,
+        sender,
+        sender_name: senderName,
+        content: `📍 Standort geteilt: ${latLabel}, ${lonLabel}`,
+        timestamp,
+        is_from_me: false,
+        location: { latitude: lat, longitude: lon },
+      });
+
+      logger.info(
+        { chatJid, sender: senderName, lat, lon },
+        'Telegram location message stored',
+      );
+    });
     this.bot.on('message:contact', (ctx) => storeNonText(ctx, '[Contact]'));
 
     // Handle errors gracefully
@@ -548,7 +669,10 @@ export class TelegramChannel implements Channel {
         .replace(/^#{1,6}\s+/gm, '')
         .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
         .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
-        .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2702}-\u{27B0}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{FE00}-\u{FE0F}\u{200D}]/gu, '')
+        .replace(
+          /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2702}-\u{27B0}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{FE00}-\u{FE0F}\u{200D}]/gu,
+          '',
+        )
         .replace(/\s+/g, ' ')
         .trim();
 
@@ -568,7 +692,11 @@ export class TelegramChannel implements Channel {
       // Send via Telegram sendVoice API
       const formData = new FormData();
       formData.append('chat_id', chatId);
-      formData.append('voice', new Blob([audioBuffer], { type: 'audio/ogg' }), 'voice.ogg');
+      formData.append(
+        'voice',
+        new Blob([audioBuffer], { type: 'audio/ogg' }),
+        'voice.ogg',
+      );
 
       const sendRes = await fetch(
         `https://api.telegram.org/bot${this.botToken}/sendVoice`,
