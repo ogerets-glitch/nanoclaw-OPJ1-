@@ -94,6 +94,12 @@ git fetch upstream && git merge upstream/main
 ```
 **ACHTUNG:** Nach upstream-Updates prüfen, ob der Circuit Breaker in `dist/group-queue.js` noch vorhanden ist. Falls überschrieben: in `src/group-queue.ts` neu einbauen und `npm run build`.
 
+## Sync-History
+
+| Datum | Upstream-Version | Commits | Konflikte | Notizen |
+|-------|-----------------|---------|-----------|---------|
+| 2026-03-22 | v1.2.21 | 41 | 4 (index.ts, remote-control.test.ts, package-lock.json, badge.svg) | Alle Custom-Patches erhalten (Circuit Breaker, Voice, Image-Vision, PDF, Location, Office-Docs, Telegram). Neues: ESLint, Claw CLI, Slack-Formatting-Skill, Security-Fix. |
+
 ## OpenBrain-Regeln
 - Bei add_memory IMMER setzen: author="opj1", visibility=["global"]
   (oder spezifischer wenn Inhalt nur für bestimmte Agents relevant ist)
