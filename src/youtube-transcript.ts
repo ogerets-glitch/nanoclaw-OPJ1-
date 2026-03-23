@@ -23,7 +23,9 @@ export interface YouTubeTranscriptResult {
  * Extract all YouTube video IDs from a text.
  * Returns unique IDs in order of appearance.
  */
-export function extractYouTubeUrls(text: string): { videoId: string; url: string }[] {
+export function extractYouTubeUrls(
+  text: string,
+): { videoId: string; url: string }[] {
   const seen = new Set<string>();
   const results: { videoId: string; url: string }[] = [];
 
@@ -46,20 +48,33 @@ async function fetchSingleTranscript(
   maxChars: number,
 ): Promise<{ transcript: string | null; error: string | null }> {
   try {
-    const res = await fetch(`${MICROSERVICE_URL}?v=${encodeURIComponent(videoId)}`, {
-      signal: AbortSignal.timeout(30_000),
-    });
+    const res = await fetch(
+      `${MICROSERVICE_URL}?v=${encodeURIComponent(videoId)}`,
+      {
+        signal: AbortSignal.timeout(30_000),
+      },
+    );
 
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      logger.warn({ videoId, status: res.status, body }, 'YouTube transcript microservice error');
+      logger.warn(
+        { videoId, status: res.status, body },
+        'YouTube transcript microservice error',
+      );
       return { transcript: null, error: mapHttpError(res.status, body) };
     }
 
-    const data = (await res.json()) as { text?: string; transcript?: string; error?: string };
+    const data = (await res.json()) as {
+      text?: string;
+      transcript?: string;
+      error?: string;
+    };
 
     if (data.error) {
-      logger.warn({ videoId, error: data.error }, 'YouTube transcript unavailable');
+      logger.warn(
+        { videoId, error: data.error },
+        'YouTube transcript unavailable',
+      );
       return { transcript: null, error: data.error };
     }
 
@@ -77,19 +92,24 @@ async function fetchSingleTranscript(
   } catch (err) {
     if (err instanceof DOMException && err.name === 'TimeoutError') {
       logger.warn({ videoId }, 'YouTube transcript microservice timeout');
-      return { transcript: null, error: 'Transkript-Microservice hat nicht rechtzeitig geantwortet.' };
+      return {
+        transcript: null,
+        error: 'Transkript-Microservice hat nicht rechtzeitig geantwortet.',
+      };
     }
     logger.error({ videoId, error: err }, 'YouTube transcript fetch failed');
     return {
       transcript: null,
-      error: 'Transkript-Microservice nicht erreichbar (http://localhost:8387).',
+      error:
+        'Transkript-Microservice nicht erreichbar (http://localhost:8387).',
     };
   }
 }
 
 function mapHttpError(status: number, body: string): string {
   if (status === 404) return 'Kein Transkript für dieses Video verfügbar.';
-  if (status === 429) return 'Zu viele Anfragen — bitte später erneut versuchen.';
+  if (status === 429)
+    return 'Zu viele Anfragen — bitte später erneut versuchen.';
   if (status >= 500) return 'Transkript-Microservice interner Fehler.';
   return body || 'Transkript konnte nicht abgerufen werden.';
 }
@@ -110,7 +130,10 @@ export async function enrichWithYouTubeTranscripts(
 
   const results = await Promise.all(
     urls.map(async ({ videoId, url }) => {
-      const { transcript, error } = await fetchSingleTranscript(videoId, perVideoLimit);
+      const { transcript, error } = await fetchSingleTranscript(
+        videoId,
+        perVideoLimit,
+      );
       return { videoId, url, transcript, error } as YouTubeTranscriptResult;
     }),
   );

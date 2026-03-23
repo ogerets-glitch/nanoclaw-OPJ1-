@@ -263,10 +263,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     const ytEnrichment = await enrichWithYouTubeTranscripts(missedMessages);
     if (ytEnrichment) {
       prompt += ytEnrichment;
-      logger.info({ group: group.name }, 'Enriched prompt with YouTube transcripts');
+      logger.info(
+        { group: group.name },
+        'Enriched prompt with YouTube transcripts',
+      );
     }
   } catch (ytErr) {
-    logger.error({ group: group.name, error: ytErr }, 'YouTube transcript enrichment failed, continuing without');
+    logger.error(
+      { group: group.name, error: ytErr },
+      'YouTube transcript enrichment failed, continuing without',
+    );
   }
 
   // Collect image attachments from messages
