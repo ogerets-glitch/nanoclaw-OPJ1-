@@ -69,7 +69,7 @@ import {
   RegisteredGroup,
 } from './types.js';
 import { logger } from './logger.js';
-import { enrichWithYouTubeTranscripts } from './youtube-transcript.js';
+
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -257,23 +257,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
 
   let prompt = formatMessages(missedMessages, TIMEZONE);
-
-  // Enrich with YouTube transcripts if URLs are detected
-  try {
-    const ytEnrichment = await enrichWithYouTubeTranscripts(missedMessages);
-    if (ytEnrichment) {
-      prompt += ytEnrichment;
-      logger.info(
-        { group: group.name },
-        'Enriched prompt with YouTube transcripts',
-      );
-    }
-  } catch (ytErr) {
-    logger.error(
-      { group: group.name, error: ytErr },
-      'YouTube transcript enrichment failed, continuing without',
-    );
-  }
 
   // Collect image attachments from messages
   const images = missedMessages.flatMap((m) =>
