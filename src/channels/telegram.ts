@@ -48,6 +48,9 @@ async function sendTelegramMessage(
   }
 }
 
+// Per-chat persistent model preference (in-memory, resets on restart)
+const chatModelPrefs = new Map<string, string>();
+
 export class TelegramChannel implements Channel {
   name = 'telegram';
 
@@ -116,11 +119,69 @@ export class TelegramChannel implements Channel {
         return;
       }
 
-      // Skip commands
-      if (ctx.message.text.startsWith('/')) return;
-
+      // --- Model & Thinking Command Interceptor ---
+      const VALID_MODELS = ['opus', 'sonnet', 'haiku'] as const;
+      type ModelAlias = typeof VALID_MODELS[number];
       const chatJid = `tg:${ctx.chat.id}`;
-      let content = ctx.message.text;
+
+      if (ctx.message.text.startsWith('/model')) {
+        const parts = ctx.message.text.trim().split(/\s+/);
+        if (parts.length === 1) {
+          // /model — show current
+          const current = chatModelPrefs.get(chatJid) || 'default (sonnet)';
+          await ctx.reply(
+            `Aktuelles Modell: ${current}\n\nPersistent: /model opus|sonnet|haiku\nEinmalig: /opus /sonnet /haiku <Nachricht>\nThinking: /think <Nachricht>\nKombinierbar: /opus /think <Nachricht>`,
+          );
+        } else {
+          const alias = parts[1].toLowerCase();
+          if (VALID_MODELS.includes(alias as ModelAlias)) {
+            chatModelPrefs.set(chatJid, alias);
+            await ctx.reply(`Modell gewechselt: ${alias}`);
+          } else {
+            await ctx.reply(`Unbekanntes Modell: ${alias}\nVerfügbar: opus, sonnet, haiku`);
+          }
+        }
+        return;
+      }
+
+      // Parse one-shot modifiers: /opus, /sonnet, /haiku, /think
+      let msgText = ctx.message.text;
+      let modelOverride: string | undefined;
+      let thinkingBudget: number | undefined;
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const alias of VALID_MODELS) {
+          if (msgText.startsWith(`/${alias} `) || msgText === `/${alias}`) {
+            modelOverride = alias;
+            msgText = msgText.slice(alias.length + 2).trim();
+            changed = true;
+            break;
+          }
+        }
+        if (msgText.startsWith('/think ') || msgText === '/think') {
+          thinkingBudget = 10000;
+          msgText = msgText.slice(7).trim();
+          changed = true;
+        }
+      }
+
+      // One-shot commands without message body → show help
+      if ((modelOverride || thinkingBudget) && !msgText) {
+        const cmd = modelOverride ? `/${modelOverride}` : '/think';
+        await ctx.reply(`Nutze ${cmd} gefolgt von deiner Nachricht.\nBeispiel: ${cmd} Was ist der Sinn des Lebens?`);
+        return;
+      }
+
+      // Apply persistent model if no one-shot override
+      if (!modelOverride && chatModelPrefs.has(chatJid)) {
+        modelOverride = chatModelPrefs.get(chatJid);
+      }
+
+      // Skip other slash commands (Telegram bot commands like /start, /help, etc.)
+      if (msgText.startsWith('/') && !modelOverride && !thinkingBudget) return;
+
+      let content = msgText;
       const timestamp = new Date(ctx.message.date * 1000).toISOString();
       const senderName =
         ctx.from?.first_name ||
@@ -186,6 +247,8 @@ export class TelegramChannel implements Channel {
         content,
         timestamp,
         is_from_me: false,
+        modelOverride,
+        thinkingBudget,
       });
 
       logger.info(
@@ -345,7 +408,7 @@ export class TelegramChannel implements Channel {
         const sttRes = await fetch('http://127.0.0.1:8384/transcribe', {
           method: 'POST',
           body: form,
-          signal: AbortSignal.timeout(60_000),
+          signal: AbortSignal.timeout(600_000),
         });
 
         if (!sttRes.ok)
