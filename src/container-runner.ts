@@ -276,16 +276,22 @@ async function buildContainerArgs(
     logger.info({ containerName }, 'OneCLI gateway config applied');
   } else {
     // Fallback: inject credentials directly from .env when OneCLI is unavailable
-    const creds = readEnvFile([
-      'ANTHROPIC_API_KEY',
-      'CLAUDE_CODE_OAUTH_TOKEN',
-    ]);
+    const creds = readEnvFile(['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN']);
     if (creds.CLAUDE_CODE_OAUTH_TOKEN) {
-      args.push('-e', `CLAUDE_CODE_OAUTH_TOKEN=${creds.CLAUDE_CODE_OAUTH_TOKEN}`);
-      logger.info({ containerName }, 'Credentials injected from .env (OAuth token)');
+      args.push(
+        '-e',
+        `CLAUDE_CODE_OAUTH_TOKEN=${creds.CLAUDE_CODE_OAUTH_TOKEN}`,
+      );
+      logger.info(
+        { containerName },
+        'Credentials injected from .env (OAuth token)',
+      );
     } else if (creds.ANTHROPIC_API_KEY) {
       args.push('-e', `ANTHROPIC_API_KEY=${creds.ANTHROPIC_API_KEY}`);
-      logger.info({ containerName }, 'Credentials injected from .env (API key)');
+      logger.info(
+        { containerName },
+        'Credentials injected from .env (API key)',
+      );
     } else {
       logger.warn(
         { containerName },

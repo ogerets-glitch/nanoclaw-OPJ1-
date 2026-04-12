@@ -4,6 +4,50 @@ All notable changes to NanoClaw will be documented in this file.
 
 For detailed release notes, see the [full changelog on the documentation site](https://docs.nanoclaw.dev/changelog).
 
+## [1.2.52-opj1] - 2026-04-12
+
+Fork-Merge von upstream v1.2.52. Alle lokalen Customizations erhalten.
+
+### Neue Features (von upstream)
+- **Agent SDK 0.2.92** mit 1M Context und 200k Auto-Compact
+- **Built-in Logger** ersetzt pino/pino-pretty (weniger Dependencies)
+- **OneCLI Credential System** (nicht aktiviert — Fallback auf .env)
+- **Session Cleanup** — verwaiste Session-Artefakte werden beim Start und täglich bereinigt
+- **Stale Session Recovery** — erkennt und bereinigt korrupte Sessions automatisch
+- **Task Scripts** — Scheduled Tasks können vor dem Agent-Aufruf ein Script ausführen
+- **Reply/Quoted Message Context** — Antworten auf Nachrichten werden mit Kontext weitergegeben
+- **Per-Group Trigger Patterns** — jede Gruppe kann eigene Trigger haben
+- **Channel Registry** — Channels registrieren sich über Plugin-System statt Hardcoding
+- **Auto-Compact bei 165k Tokens** (upstream default)
+- **Neue Skills:** migrate-nanoclaw, add-karpathy-llm-wiki, channel-formatting, init-onecli, migrate-from-openclaw, add-macos-statusbar, add-emacs, use-native-credential-proxy
+
+### Sicherheitsfixes (von upstream)
+- Command Injection Prevention in `stopContainer` und Mount-Pfaden
+- Message History Overflow Fix — verhindert, dass der volle Nachrichtenverlauf an Container gesendet wird
+- `.npmrc` mit 7-Tage-Mindestalter für Dependencies
+
+### Fork-spezifische Änderungen
+- **Credential Fallback:** Wenn OneCLI nicht verfügbar, wird `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` direkt aus `.env` injiziert
+- **Telegram Channel Registration:** Import in `channels/index.ts` für das neue Registry-Pattern
+- **TRIGGER_PATTERN → getTriggerPattern():** Auf per-group Trigger-Pattern umgestellt
+- **ContainerInput erweitert:** `script`, `modelOverride`, `thinkingBudget` Felder kombiniert
+- **buildContainerArgs:** Signatur erweitert um `agentIdentifier` (OneCLI) + `input` (model/thinking overrides)
+
+### Entfernte Dependencies
+- pino, pino-pretty (→ built-in logger)
+- yaml, zod (nicht mehr genutzt)
+
+### Beibehaltene Fork-Customizations
+- Telegram-Channel mit grammy (upstream hat ihn entfernt)
+- Image Vision (sharp + Telegram photo download)
+- Voice/Whisper STT (600s Timeout)
+- PDF Reader Skill
+- Kalender-Skill (iCal)
+- Circuit Breaker
+- Philosophie-Feed Skill
+- /compact Session-Command
+- Model Override + Thinking Budget per Nachricht
+
 ## [1.2.36] - 2026-03-26
 
 - [BREAKING] Replaced pino logger with built-in logger. WhatsApp users must re-merge the WhatsApp fork to pick up the Baileys logger compatibility fix: `git fetch whatsapp main && git merge whatsapp/main`. If the `whatsapp` remote is not configured: `git remote add whatsapp https://github.com/qwibitai/nanoclaw-whatsapp.git`.
