@@ -1,3 +1,20 @@
 {
-  "mcpServers": {}
+  "mcpServers": {
+    "arbeitsmarkt": {
+      "url": "https://arbeitsmarkt-oliver.kozow.com/mcp?api_key=REDACTED_ARBEITSMARKT_KEY_2026_04_24"
+    },
+    "rechtsrecherche": {
+      "url": "https://rechtsrecherche-oliver.kozow.com/mcp?api_key=REDACTED_RECHTSRECHERCHE_KEY_2026_04_24"
+    },
+    "openbrain": {
+      "url": "https://openbrain-oliver.kozow.com/mcp?api_key=REDACTED_OPENBRAIN_KEY_2026_04_24"
+    },
+    "parallel-task": {
+      "type": "http",
+      "url": "https://task-mcp.parallel.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer REDACTED_PARALLEL_AI_TOKEN_2026_04_24"
+      }
+    }
+  }
 }

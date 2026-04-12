@@ -329,6 +329,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   let prompt = formatMessages(missedMessages, TIMEZONE);
 
+  // Extract model/thinking modifiers from the latest message
+  const latestMsg = missedMessages[missedMessages.length - 1];
+  const modelOverride = latestMsg.modelOverride;
+  const thinkingBudget = latestMsg.thinkingBudget;
+
   // Collect image attachments from messages
   const images = missedMessages.flatMap((m) =>
     (m.images || []).map((img) => ({
@@ -419,6 +424,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       }
     },
     images,
+    modelOverride,
+    thinkingBudget,
   );
 
   await channel.setTyping?.(chatJid, false);
@@ -455,6 +462,8 @@ async function runAgent(
   chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
   images?: import('./container-runner.js').ImageContentBlock[],
+  modelOverride?: string,
+  thinkingBudget?: number,
 ): Promise<'success' | 'error'> {
   const isMain = group.isMain === true;
   const sessionId = sessions[group.folder];
@@ -507,6 +516,8 @@ async function runAgent(
         chatJid,
         isMain,
         assistantName: ASSISTANT_NAME,
+        modelOverride,
+        thinkingBudget,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),

@@ -169,6 +169,12 @@ async function runTask(
     }, TASK_CLOSE_DELAY_MS);
   };
 
+  // Skill-default models for scheduled tasks
+  const SKILL_MODEL_DEFAULTS: Record<string, string> = {
+    'philosophie-feed': 'opus',
+  };
+  const skillModel = SKILL_MODEL_DEFAULTS[task.group_folder];
+
   try {
     const output = await runContainerAgent(
       group,
@@ -181,6 +187,7 @@ async function runTask(
         isScheduledTask: true,
         assistantName: ASSISTANT_NAME,
         script: task.script || undefined,
+        modelOverride: skillModel,
       },
       (proc, containerName) =>
         deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),

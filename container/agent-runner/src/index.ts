@@ -472,6 +472,12 @@ async function runQuery(
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
 
+  // Model and thinking overrides (set by host via container env vars)
+  const modelOverride = process.env.NANOCLAW_MODEL_OVERRIDE;
+  const thinkingBudget = process.env.NANOCLAW_THINKING_BUDGET;
+  if (modelOverride) log(`Model override: ${modelOverride}`);
+  if (thinkingBudget) log(`Thinking budget: ${thinkingBudget} tokens`);
+
   for await (const message of query({
     prompt: stream,
     options: {
@@ -479,6 +485,8 @@ async function runQuery(
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
+      ...(modelOverride ? { model: modelOverride } : {}),
+      ...(thinkingBudget ? { maxThinkingTokens: parseInt(thinkingBudget, 10) } : {}),
       systemPrompt: globalClaudeMd
         ? {
             type: 'preset' as const,

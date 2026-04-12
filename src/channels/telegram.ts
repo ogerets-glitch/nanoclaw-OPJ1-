@@ -121,7 +121,7 @@ export class TelegramChannel implements Channel {
 
       // --- Model & Thinking Command Interceptor ---
       const VALID_MODELS = ['opus', 'sonnet', 'haiku'] as const;
-      type ModelAlias = typeof VALID_MODELS[number];
+      type ModelAlias = (typeof VALID_MODELS)[number];
       const chatJid = `tg:${ctx.chat.id}`;
 
       if (ctx.message.text.startsWith('/model')) {
@@ -138,7 +138,9 @@ export class TelegramChannel implements Channel {
             chatModelPrefs.set(chatJid, alias);
             await ctx.reply(`Modell gewechselt: ${alias}`);
           } else {
-            await ctx.reply(`Unbekanntes Modell: ${alias}\nVerfügbar: opus, sonnet, haiku`);
+            await ctx.reply(
+              `Unbekanntes Modell: ${alias}\nVerfügbar: opus, sonnet, haiku`,
+            );
           }
         }
         return;
@@ -169,7 +171,9 @@ export class TelegramChannel implements Channel {
       // One-shot commands without message body → show help
       if ((modelOverride || thinkingBudget) && !msgText) {
         const cmd = modelOverride ? `/${modelOverride}` : '/think';
-        await ctx.reply(`Nutze ${cmd} gefolgt von deiner Nachricht.\nBeispiel: ${cmd} Was ist der Sinn des Lebens?`);
+        await ctx.reply(
+          `Nutze ${cmd} gefolgt von deiner Nachricht.\nBeispiel: ${cmd} Was ist der Sinn des Lebens?`,
+        );
         return;
       }
 

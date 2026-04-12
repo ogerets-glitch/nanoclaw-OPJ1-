@@ -54,6 +54,8 @@ export interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   script?: string;
+  modelOverride?: string;
+  thinkingBudget?: number;
 }
 
 export interface ContainerOutput {
@@ -257,6 +259,7 @@ async function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
   agentIdentifier?: string,
+  input?: ContainerInput,
 ): Promise<string[]> {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
@@ -272,10 +275,23 @@ async function buildContainerArgs(
   if (onecliApplied) {
     logger.info({ containerName }, 'OneCLI gateway config applied');
   } else {
-    logger.warn(
-      { containerName },
-      'OneCLI gateway not reachable — container will have no credentials',
-    );
+    // Fallback: inject credentials directly from .env when OneCLI is unavailable
+    const creds = readEnvFile([
+      'ANTHROPIC_API_KEY',
+      'CLAUDE_CODE_OAUTH_TOKEN',
+    ]);
+    if (creds.CLAUDE_CODE_OAUTH_TOKEN) {
+      args.push('-e', `CLAUDE_CODE_OAUTH_TOKEN=${creds.CLAUDE_CODE_OAUTH_TOKEN}`);
+      logger.info({ containerName }, 'Credentials injected from .env (OAuth token)');
+    } else if (creds.ANTHROPIC_API_KEY) {
+      args.push('-e', `ANTHROPIC_API_KEY=${creds.ANTHROPIC_API_KEY}`);
+      logger.info({ containerName }, 'Credentials injected from .env (API key)');
+    } else {
+      logger.warn(
+        { containerName },
+        'OneCLI gateway not reachable and no credentials in .env — container will have no credentials',
+      );
+    }
   }
 
   // CUSTOM: Calendar iCal URL for OPJ1 – may need manual merge on upstream updates
@@ -284,6 +300,14 @@ async function buildContainerArgs(
     readEnvFile(['CALENDAR_ICAL_URL']).CALENDAR_ICAL_URL;
   if (calendarUrl) {
     args.push('-e', `CALENDAR_ICAL_URL=${calendarUrl}`);
+  }
+
+  // Model override and thinking budget (set per-message by Telegram interceptor or skill defaults)
+  if (input?.modelOverride) {
+    args.push('-e', `NANOCLAW_MODEL_OVERRIDE=${input.modelOverride}`);
+  }
+  if (input?.thinkingBudget) {
+    args.push('-e', `NANOCLAW_THINKING_BUDGET=${input.thinkingBudget}`);
   }
 
   // Runtime-specific args for host gateway resolution
@@ -334,6 +358,7 @@ export async function runContainerAgent(
     mounts,
     containerName,
     agentIdentifier,
+    input,
   );
 
   logger.debug(
