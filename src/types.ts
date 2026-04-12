@@ -58,6 +58,8 @@ export interface NewMessage {
   is_bot_message?: boolean;
   images?: ImageAttachment[];
   location?: { latitude: number; longitude: number };
+  modelOverride?: string;
+  thinkingBudget?: number;
   thread_id?: string;
   reply_to_message_id?: string;
   reply_to_message_content?: string;
