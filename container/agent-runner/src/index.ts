@@ -149,6 +149,24 @@ function writeOutput(output: ContainerOutput): void {
   console.log(OUTPUT_END_MARKER);
 }
 
+type HttpMcpServer = { type: 'http'; url: string };
+
+function buildHttpMcpServers(): Record<string, HttpMcpServer> {
+  const servers: Record<string, HttpMcpServer> = {};
+  const map: Record<string, string | undefined> = {
+    claude_ai_Open_Brain: process.env.OPENBRAIN_MCP_URL,
+    claude_ai_Rechtsrecherche: process.env.RECHTSRECHERCHE_MCP_URL,
+    claude_ai_Arbeitsmarkt: process.env.ARBEITSMARKT_MCP_URL,
+    claude_ai_Location: process.env.LOCATION_MCP_URL,
+  };
+  for (const [name, url] of Object.entries(map)) {
+    if (url) {
+      servers[name] = { type: 'http', url };
+    }
+  }
+  return servers;
+}
+
 function log(message: string): void {
   console.error(`[agent-runner] ${message}`);
 }
@@ -514,6 +532,10 @@ async function runQuery(
         'Skill',
         'NotebookEdit',
         'mcp__nanoclaw__*',
+        'mcp__claude_ai_Open_Brain__*',
+        'mcp__claude_ai_Rechtsrecherche__*',
+        'mcp__claude_ai_Arbeitsmarkt__*',
+        'mcp__claude_ai_Location__*',
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -529,6 +551,7 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
+        ...buildHttpMcpServers(),
       },
       hooks: {
         PreCompact: [

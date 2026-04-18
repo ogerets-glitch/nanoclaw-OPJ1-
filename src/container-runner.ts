@@ -308,6 +308,27 @@ async function buildContainerArgs(
     args.push('-e', `CALENDAR_ICAL_URL=${calendarUrl}`);
   }
 
+  // CUSTOM: MCP server URLs (OpenBrain, Rechtsrecherche, Arbeitsmarkt, Location)
+  // are forwarded from host .env so api_keys never land in source or images.
+  const mcpUrls = readEnvFile([
+    'OPENBRAIN_MCP_URL',
+    'RECHTSRECHERCHE_MCP_URL',
+    'ARBEITSMARKT_MCP_URL',
+    'LOCATION_MCP_URL',
+  ]);
+  for (const [key, value] of Object.entries(mcpUrls)) {
+    if (value) {
+      args.push('-e', `${key}=${value}`);
+    }
+  }
+
+  // CUSTOM: SSH keys for git push to github-memex, mounted read-only at runtime.
+  // Keys are not baked into the image — the directory is gitignored on the host.
+  const sshKeysDir = path.join(process.cwd(), 'container', 'ssh-keys');
+  if (fs.existsSync(sshKeysDir)) {
+    args.push(...readonlyMountArgs(sshKeysDir, '/home/node/.ssh'));
+  }
+
   // Model override and thinking budget (set per-message by Telegram interceptor or skill defaults)
   if (input?.modelOverride) {
     args.push('-e', `NANOCLAW_MODEL_OVERRIDE=${input.modelOverride}`);
