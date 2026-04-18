@@ -51,6 +51,58 @@ async function sendTelegramMessage(
 // Per-chat persistent model preference (in-memory, resets on restart)
 const chatModelPrefs = new Map<string, string>();
 
+// Rate-limit fürs Weiterreichen von Locations an den location-service (ms pro Chat)
+const lastLocationForward = new Map<string, number>();
+const LOCATION_FORWARD_MIN_INTERVAL_MS = 10_000;
+
+async function forwardLocationToService(
+  chatJid: string,
+  lat: number,
+  lon: number,
+  ts: string,
+  senderId: string,
+  livePeriod: number | undefined,
+): Promise<void> {
+  const url = process.env.LOCATION_SERVICE_URL;
+  const key = process.env.LOCATION_INGEST_KEY;
+  if (!url || !key) return;
+
+  const now = Date.now();
+  const last = lastLocationForward.get(chatJid) || 0;
+  if (now - last < LOCATION_FORWARD_MIN_INTERVAL_MS) return;
+  lastLocationForward.set(chatJid, now);
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': key,
+      },
+      body: JSON.stringify({
+        lat,
+        lon,
+        ts,
+        sender_id: senderId,
+        chat_jid: chatJid,
+        live_period: livePeriod,
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) {
+      logger.warn(
+        { status: res.status, chatJid },
+        'location-service ingest returned non-2xx',
+      );
+    }
+  } catch (err) {
+    logger.warn(
+      { err: (err as Error).message, chatJid },
+      'location-service ingest failed (non-blocking)',
+    );
+  }
+}
+
 export class TelegramChannel implements Channel {
   name = 'telegram';
 
@@ -667,9 +719,47 @@ export class TelegramChannel implements Channel {
         location: { latitude: lat, longitude: lon },
       });
 
+      const livePeriod = (ctx.message.location as { live_period?: number })
+        .live_period;
+      void forwardLocationToService(
+        chatJid,
+        lat,
+        lon,
+        timestamp,
+        sender,
+        livePeriod,
+      );
+
       logger.info(
         { chatJid, sender: senderName, lat, lon },
         'Telegram location message stored',
+      );
+    });
+    this.bot.on('edited_message:location', (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) return;
+
+      const loc = ctx.editedMessage?.location;
+      if (!loc) return;
+
+      const lat = loc.latitude;
+      const lon = loc.longitude;
+      const editTsSec =
+        ctx.editedMessage?.edit_date ??
+        ctx.editedMessage?.date ??
+        Math.floor(Date.now() / 1000);
+      const timestamp = new Date(editTsSec * 1000).toISOString();
+      const sender = ctx.from?.id.toString() || '';
+      const livePeriod = (loc as { live_period?: number }).live_period;
+
+      void forwardLocationToService(
+        chatJid,
+        lat,
+        lon,
+        timestamp,
+        sender,
+        livePeriod,
       );
     });
     this.bot.on('message:contact', (ctx) => storeNonText(ctx, '[Contact]'));
