@@ -41,10 +41,48 @@ Copy directory as-is. Simplified version for host-level Claude Code sessions.
 Copy as-is. **WARNING: Contains API URLs that may include tokens. This file is in .gitignore.**
 
 Custom MCP servers:
-- `arbeitsmarkt` — German labor market (BA-Jobbörse, GENESIS, Regionalstatistik)
-- `rechtsrecherche` — Legal research (NeuRIS, GII, Open Legal Data)
-- `openbrain` — Shared collective memory (semantic search)
+- `claude_ai_Arbeitsmarkt` — German labor market (BA-Jobbörse, GENESIS, Regionalstatistik)
+- `claude_ai_Rechtsrecherche` — Legal research (NeuRIS, GII, Open Legal Data)
+- `claude_ai_Open_Brain` — Shared collective memory (semantic search)
 - `parallel-task` — Parallel task execution
+
+Server names MUST match the `mcp__<server>__*` prefix used by the Agent SDK (Claude.ai-style
+`claude_ai_<Name>`), otherwise the `allowedTools` patterns in `agent-runner/src/index.ts` won't
+match and the tools stay hidden.
+
+### agent-runner/src/index.ts — MCP servers must be hardcoded
+
+The Agent SDK does NOT auto-load `.mcp.json` from the CWD. The three external HTTP MCP servers
+have to be added directly to the `mcpServers:` block in the `query()` options (next to
+`nanoclaw`), and their tool patterns added to `allowedTools`:
+
+```typescript
+allowedTools: [
+  // ...existing entries,
+  'mcp__nanoclaw__*',
+  'mcp__claude_ai_Open_Brain__*',
+  'mcp__claude_ai_Rechtsrecherche__*',
+  'mcp__claude_ai_Arbeitsmarkt__*',
+],
+mcpServers: {
+  nanoclaw: { /* ...existing stdio config */ },
+  claude_ai_Open_Brain: {
+    type: 'http',
+    url: 'https://openbrain-oliver.kozow.com/mcp?api_key=<OPENBRAIN_API_KEY>',
+  },
+  claude_ai_Rechtsrecherche: {
+    type: 'http',
+    url: 'https://rechtsrecherche-oliver.kozow.com/mcp?api_key=<RECHTSRECHERCHE_API_KEY>',
+  },
+  claude_ai_Arbeitsmarkt: {
+    type: 'http',
+    url: 'https://arbeitsmarkt-oliver.kozow.com/mcp?api_key=<ARBEITSMARKT_API_KEY>',
+  },
+},
+```
+
+Current URLs (with API keys) are also in `groups/telegram_main/.mcp.json` — keep both in sync
+or, when upstream gains real `.mcp.json` auto-load, delete the hardcoded block.
 
 ## Permission Settings
 
