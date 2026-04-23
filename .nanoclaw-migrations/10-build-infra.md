@@ -58,10 +58,25 @@ See section 5 (container) for:
 
 ## .env Variables Required
 
+`/home/opj1claw/nanoclaw/.env` — chmod 600, owned by `opj1claw:opj1claw`, **nicht** im Repo (in `.gitignore`).
+
 ```
-CLAUDE_CODE_OAUTH_TOKEN=<token>
-TELEGRAM_BOT_TOKEN=<token>
-CALENDAR_ICAL_URL=<google calendar ical url>
+# Auth & Core
+CLAUDE_CODE_OAUTH_TOKEN=<Claude Max OAuth token>
+TELEGRAM_BOT_TOKEN=<@MontjoieOG77_bot token>
+
+# MCP Server URLs (mit Key im Query-Param — wurden 2026-04-17 aus Source/Image extrahiert, Commit 11b2856)
+OPENBRAIN_MCP_URL=https://openbrain-oliver.kozow.com/mcp?api_key=<OPENBRAIN_API_KEY>
+RECHTSRECHERCHE_MCP_URL=https://rechtsrecherche-oliver.kozow.com/mcp?api_key=<RECHTSRECHERCHE_API_KEY>
+ARBEITSMARKT_MCP_URL=https://arbeitsmarkt-oliver.kozow.com/mcp?api_key=<ARBEITSMARKT_API_KEY>
+LOCATION_MCP_URL=https://<location-service-host>/mcp?api_key=<LOCATION_API_KEY>
+
+# Kalender
+CALENDAR_ICAL_URL=<Google Calendar private iCal URL>
+
+# Location-Service Ingest (für Telegram-Location-Forwarding, Commit daebc66)
+LOCATION_SERVICE_URL=http://127.0.0.1:<location-port>/ingest
+LOCATION_INGEST_KEY=<ingest-secret>
 ```
 
-These are NOT in the repo (chmod 600, owned by service user).
+Plus: Der Bot-Prozess liest eine zweite `.env` für Skill-Keys (durch den Container-Mount sichtbar) — siehe Section 11.

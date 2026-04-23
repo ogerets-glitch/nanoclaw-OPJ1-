@@ -4,10 +4,11 @@
 
 ## External Services Required
 
-- **Whisper STT:** `http://127.0.0.1:8384/transcribe` — accepts multipart/form-data with `file` field, returns JSON `{ text }`. Language: `de`. Timeout: 600s (for long voice messages).
-- **Piper TTS:** `http://127.0.0.1:8385/synthesize` — accepts JSON `{ text }`, returns audio/ogg buffer.
+- **Whisper STT:** `http://127.0.0.1:8384/transcribe` — accepts multipart/form-data with `file` field, returns JSON `{ text }`. Language: `de`. Timeout: **600s** (nicht 60s — lange Sprachnachrichten). Service: `whisper-stt.service`, faster-whisper small int8 lokal.
+- **TTS OpenAI (primär, seit 2026-04-22):** `http://127.0.0.1:8385/synthesize` — OpenAI `tts-1-hd`, Stimme `onyx`. Service: `tts-openai.service`. Drop-in-kompatibel mit altem Piper-Contract (JSON `{ text }` → audio/ogg).
+- **Piper TTS (Fallback, auf Port 8386 umgezogen):** `http://127.0.0.1:8386/synthesize` — Piper mit Stimme `de_DE-thorsten-high`. Service: `piper-tts.service`. Nur erreichen, wenn TTS-OpenAI einen Fehler liefert.
 
-These are separate services on the VPS, not part of NanoClaw.
+Alle drei sind separate Services auf dem VPS (systemd-Units unter eigenen Usern), nicht Teil von NanoClaw. Port-Layout ist stabil; bei Migration nur sicherstellen, dass das TTS-Sendeziel in `telegram.ts` auf `8385` zeigt (primär). Falls der Fallback im Code separat anzustoßen ist: `8386` als Fallback-Host.
 
 ## Implementation
 

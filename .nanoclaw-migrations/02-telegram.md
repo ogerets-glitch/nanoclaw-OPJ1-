@@ -45,7 +45,7 @@ The file implements `ChannelOpts` from `./registry.js` and self-registers via `r
 - Documents (PDF): downloaded via bot API → if PDF, save to `attachments/` dir → content read via `pdf-reader extract`
 - Office docs (.docx, .xlsx, .pptx, .odt, .ods, .odp): converted via `libreoffice --headless --convert-to txt`
 - Text files (.txt, .csv, .json, .xml, .md, .log): read directly
-- Locations: extracted as `{ latitude, longitude }` on NewMessage
+- Locations: extracted as `{ latitude, longitude }` on NewMessage **UND** zusätzlich als Fire-and-Forget-POST an den externen location-service weitergegeben (Ingest-Hook), damit OwnTracks-Tracking auch via Telegram-Standort-Push funktioniert. Siehe Commit `daebc66` — liest `LOCATION_SERVICE_URL` und `LOCATION_INGEST_KEY` aus `.env`, schickt `{ lat, lon, tst, chatId }` per HTTP POST. Fehler werden nur geloggt, nicht durchgereicht.
 - Stickers: emoji placeholder
 - Contacts: placeholder text
 

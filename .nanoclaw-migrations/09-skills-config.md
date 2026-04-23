@@ -44,7 +44,10 @@ Custom MCP servers:
 - `claude_ai_Arbeitsmarkt` — German labor market (BA-Jobbörse, GENESIS, Regionalstatistik)
 - `claude_ai_Rechtsrecherche` — Legal research (NeuRIS, GII, Open Legal Data)
 - `claude_ai_Open_Brain` — Shared collective memory (semantic search)
+- `claude_ai_Location` — OwnTracks + Telegram-Location ingest, context/departures/weather (neu seit 2026-04-18)
 - `parallel-task` — Parallel task execution
+
+**Security-Commit `11b2856` (2026-04-17):** Die echten MCP-URLs inkl. API-Keys (`?api_key=...`) wurden aus Source und Image herausgezogen und leben nur noch in `/home/opj1claw/nanoclaw/.env`. Im Code stehen Platzhalter. Bei Migration: **Nicht** die Keys aus dem alten `container/agent-runner/src/index.ts` übernehmen — sondern die Vars aus `.env` lesen (`OPENBRAIN_MCP_URL`, `RECHTSRECHERCHE_MCP_URL`, `ARBEITSMARKT_MCP_URL`, `LOCATION_MCP_URL`).
 
 Server names MUST match the `mcp__<server>__*` prefix used by the Agent SDK (Claude.ai-style
 `claude_ai_<Name>`), otherwise the `allowedTools` patterns in `agent-runner/src/index.ts` won't
@@ -63,26 +66,30 @@ allowedTools: [
   'mcp__claude_ai_Open_Brain__*',
   'mcp__claude_ai_Rechtsrecherche__*',
   'mcp__claude_ai_Arbeitsmarkt__*',
+  'mcp__claude_ai_Location__*',
 ],
 mcpServers: {
   nanoclaw: { /* ...existing stdio config */ },
   claude_ai_Open_Brain: {
     type: 'http',
-    url: 'https://openbrain-oliver.kozow.com/mcp?api_key=<OPENBRAIN_API_KEY>',
+    url: process.env.OPENBRAIN_MCP_URL!,
   },
   claude_ai_Rechtsrecherche: {
     type: 'http',
-    url: 'https://rechtsrecherche-oliver.kozow.com/mcp?api_key=<RECHTSRECHERCHE_API_KEY>',
+    url: process.env.RECHTSRECHERCHE_MCP_URL!,
   },
   claude_ai_Arbeitsmarkt: {
     type: 'http',
-    url: 'https://arbeitsmarkt-oliver.kozow.com/mcp?api_key=<ARBEITSMARKT_API_KEY>',
+    url: process.env.ARBEITSMARKT_MCP_URL!,
+  },
+  claude_ai_Location: {
+    type: 'http',
+    url: process.env.LOCATION_MCP_URL!,
   },
 },
 ```
 
-Current URLs (with API keys) are also in `groups/telegram_main/.mcp.json` — keep both in sync
-or, when upstream gains real `.mcp.json` auto-load, delete the hardcoded block.
+Die URLs müssen als ENV-Vars durch `container-runner.ts` in den Container durchgereicht werden (siehe Section 5). Wenn upstream `.mcp.json`-Auto-Load ab v2 unterstützt: Hardcoded-Block zugunsten von `.mcp.json` entfernen, aber **.env-basierte URL-Resolution** weiterführen (Keys nicht im Klartext ins Repo).
 
 ## Permission Settings
 
