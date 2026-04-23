@@ -25,7 +25,29 @@ RUN apt-get update && apt-get install -y \
     curl \
     git \
     poppler-utils \
+    python3 \
     && rm -rf /var/lib/apt/lists/*
+
+# Install yt-dlp (standalone Python zipapp from official release) for YouTube skills
+RUN curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+    -o /usr/local/bin/yt-dlp.real && chmod +x /usr/local/bin/yt-dlp.real
+
+# Install Deno as JavaScript runtime for yt-dlp signature challenges.
+# Modern YouTube requires solving n-sig and player-JS challenges; yt-dlp 2026.x uses Deno (preferred) or Bun as runtime.
+# Node alone is NOT accepted by yt-dlp's EJS solver (2026 change).
+RUN curl -fsSL https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip \
+    -o /tmp/deno.zip && \
+    apt-get update && apt-get install -y --no-install-recommends unzip && \
+    unzip /tmp/deno.zip -d /usr/local/bin/ && \
+    chmod +x /usr/local/bin/deno && \
+    rm /tmp/deno.zip && \
+    apt-get remove -y unzip && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+
+# yt-dlp wrapper: copies read-only mounted cookies to writable /tmp (yt-dlp refreshes the cookie jar).
+# Mount path follows NanoClaw's mount-security convention (all additionalMounts land under /workspace/extra/).
+# Datacenter IPs are blacklisted by YouTube; cookies from a logged-in throwaway account unblock the extractor.
+RUN printf '#!/bin/sh\nCOOKIES_SRC=/workspace/extra/youtube-cookies.txt\nCOOKIES_WORK=/tmp/youtube-cookies.txt\nif [ -r "$COOKIES_SRC" ]; then\n  cp "$COOKIES_SRC" "$COOKIES_WORK" 2>/dev/null && exec /usr/local/bin/yt-dlp.real --cookies "$COOKIES_WORK" "$@"\nfi\nexec /usr/local/bin/yt-dlp.real "$@"\n' > /usr/local/bin/yt-dlp && \
+    chmod +x /usr/local/bin/yt-dlp
 
 # Set Chromium path for agent-browser
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
