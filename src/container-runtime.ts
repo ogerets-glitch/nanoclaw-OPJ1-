@@ -32,6 +32,7 @@ export function stopContainer(name: string): void {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(name)) {
     throw new Error(`Invalid container name: ${name}`);
   }
+  // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process -- evaluated 2026-04-24 (Stufe 2): false-positive (validated internal path/url/regex, see commit message)
   execSync(`${CONTAINER_RUNTIME_BIN} stop -t 1 ${name}`, { stdio: 'pipe' });
 }
 

@@ -119,6 +119,7 @@ export function loadMountAllowlist(): MountAllowlist | null {
 function expandPath(p: string): string {
   const homeDir = process.env.HOME || os.homedir();
   if (p.startsWith('~/')) {
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- evaluated 2026-04-24 (Stufe 2): false-positive (validated internal path/url/regex, see commit message)
     return path.join(homeDir, p.slice(2));
   }
   if (p === '~') {

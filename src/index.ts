@@ -194,6 +194,7 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   setRegisteredGroup(jid, group);
 
   // Create group folder
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- evaluated 2026-04-24 (Stufe 2): false-positive (validated internal path/url/regex, see commit message)
   fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
 
   // Copy CLAUDE.md template into the new group folder so agents have

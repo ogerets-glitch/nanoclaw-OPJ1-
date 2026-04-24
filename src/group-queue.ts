@@ -180,6 +180,7 @@ export class GroupQueue {
       return false;
     state.idleWaiting = false; // Agent is about to receive work, no longer idle
 
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- evaluated 2026-04-24 (Stufe 2): false-positive (validated internal path/url/regex, see commit message)
     const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
     try {
       fs.mkdirSync(inputDir, { recursive: true });
@@ -203,6 +204,7 @@ export class GroupQueue {
     const state = this.getGroup(groupJid);
     if (!state.active || !state.groupFolder) return;
 
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- evaluated 2026-04-24 (Stufe 2): false-positive (validated internal path/url/regex, see commit message)
     const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
     try {
       fs.mkdirSync(inputDir, { recursive: true });

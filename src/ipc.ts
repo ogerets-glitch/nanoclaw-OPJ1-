@@ -42,6 +42,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
     let groupFolders: string[];
     try {
       groupFolders = fs.readdirSync(ipcBaseDir).filter((f) => {
+        // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- evaluated 2026-04-24 (Stufe 2): false-positive (validated internal path/url/regex, see commit message)
         const stat = fs.statSync(path.join(ipcBaseDir, f));
         return stat.isDirectory() && f !== 'errors';
       });

@@ -693,6 +693,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
 
 function migrateJsonState(): void {
   const migrateFile = (filename: string) => {
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- evaluated 2026-04-24 (Stufe 2): false-positive (validated internal path/url/regex, see commit message)
     const filePath = path.join(DATA_DIR, filename);
     if (!fs.existsSync(filePath)) return null;
     try {

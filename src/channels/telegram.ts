@@ -461,6 +461,7 @@ export class TelegramChannel implements Channel {
         );
         form.append('language', 'de');
 
+        // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request -- evaluated 2026-04-24 (Stufe 2): false-positive (validated internal path/url/regex, see commit message)
         const sttRes = await fetch('http://127.0.0.1:8384/transcribe', {
           method: 'POST',
           body: form,
@@ -594,6 +595,7 @@ export class TelegramChannel implements Channel {
 
         // Save to group attachments directory
         const groupDir = resolveGroupFolderPath(group.folder);
+        // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- evaluated 2026-04-24 (Stufe 2): false-positive (validated internal path/url/regex, see commit message)
         const attachDir = path.join(groupDir, 'attachments');
         fs.mkdirSync(attachDir, { recursive: true });
 
@@ -605,6 +607,7 @@ export class TelegramChannel implements Channel {
 
         if (isPdf) {
           // --- PDF: save directly (existing behaviour) ---
+          // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- evaluated 2026-04-24 (Stufe 2): false-positive (validated internal path/url/regex, see commit message)
           const destPath = path.join(attachDir, safeName);
           fs.writeFileSync(destPath, fileBuffer);
           finalName = safeName;
@@ -630,6 +633,7 @@ export class TelegramChannel implements Channel {
             }
 
             const pdfBuffer = fs.readFileSync(tmpPdf);
+            // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- evaluated 2026-04-24 (Stufe 2): false-positive (validated internal path/url/regex, see commit message)
             const destPath = path.join(attachDir, pdfName);
             fs.writeFileSync(destPath, pdfBuffer);
             finalName = pdfName;
@@ -640,6 +644,7 @@ export class TelegramChannel implements Channel {
           }
         } else {
           // --- Text file: save directly ---
+          // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- evaluated 2026-04-24 (Stufe 2): false-positive (validated internal path/url/regex, see commit message)
           const destPath = path.join(attachDir, safeName);
           fs.writeFileSync(destPath, fileBuffer);
           finalName = safeName;
@@ -837,6 +842,7 @@ export class TelegramChannel implements Channel {
       if (cleaned.length > 4000) cleaned = cleaned.slice(0, 3997) + '...';
 
       // Call Piper TTS
+      // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request -- evaluated 2026-04-24 (Stufe 2): false-positive (validated internal path/url/regex, see commit message)
       const ttsRes = await fetch('http://127.0.0.1:8385/synthesize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

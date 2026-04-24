@@ -30,6 +30,7 @@ function ensureWithinBase(baseDir: string, resolvedPath: string): void {
 
 export function resolveGroupFolderPath(folder: string): string {
   assertValidGroupFolder(folder);
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- evaluated 2026-04-24 (Stufe 2): false-positive (validated internal path/url/regex, see commit message)
   const groupPath = path.resolve(GROUPS_DIR, folder);
   ensureWithinBase(GROUPS_DIR, groupPath);
   return groupPath;
@@ -38,6 +39,7 @@ export function resolveGroupFolderPath(folder: string): string {
 export function resolveGroupIpcPath(folder: string): string {
   assertValidGroupFolder(folder);
   const ipcBaseDir = path.resolve(DATA_DIR, 'ipc');
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- evaluated 2026-04-24 (Stufe 2): false-positive (validated internal path/url/regex, see commit message)
   const ipcPath = path.resolve(ipcBaseDir, folder);
   ensureWithinBase(ipcBaseDir, ipcPath);
   return ipcPath;

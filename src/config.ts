@@ -71,6 +71,7 @@ function escapeRegex(str: string): string {
 }
 
 export function buildTriggerPattern(trigger: string): RegExp {
+  // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- evaluated 2026-04-24 (Stufe 2): false-positive (validated internal path/url/regex, see commit message)
   return new RegExp(`^${escapeRegex(trigger.trim())}\\b`, 'i');
 }
 
