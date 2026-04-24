@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "arbeitsmarkt": {
+      "url": "https://arbeitsmarkt-oliver.kozow.com/mcp?api_key=YOUR_ARBEITSMARKT_MCP_KEY"
+    },
+    "rechtsrecherche": {
+      "url": "https://rechtsrecherche-oliver.kozow.com/mcp?api_key=YOUR_RECHTSRECHERCHE_MCP_KEY"
+    },
+    "openbrain": {
+      "url": "https://openbrain-oliver.kozow.com/mcp?api_key=YOUR_OPENBRAIN_MCP_KEY"
+    },
+    "parallel-task": {
+      "type": "http",
+      "url": "https://task-mcp.parallel.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_PARALLEL_AI_TOKEN"
+      }
+    }
+  }
+}
