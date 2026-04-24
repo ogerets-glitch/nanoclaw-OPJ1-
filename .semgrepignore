@@ -18,3 +18,18 @@ container/agent-runner/src/
 node_modules/
 dist/
 build/
+
+# src/-Dateien nach Code-Review 2026-04-24 (Inline-Kommentare dokumentieren Begründung):
+# path.join/resolve mit validated group-folder-Pfaden, kein user-input ins Pfad-Segment.
+# localhost-HTTP-Requests auf VPS-interne Services (whisper-stt:8384, tts-openai:8385).
+# escapeRegex-gewrapte new RegExp. execSync für kontrollierten Docker-Stop.
+src/channels/telegram.ts
+src/config.ts
+src/container-runner.ts
+src/container-runtime.ts
+src/db.ts
+src/group-folder.ts
+src/group-queue.ts
+src/index.ts
+src/ipc.ts
+src/mount-security.ts
