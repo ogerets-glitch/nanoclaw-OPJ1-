@@ -40,6 +40,26 @@ export interface ForwardedAttachment {
 }
 
 /**
+ * Is `name` safe to use as the last segment of a path inside the target
+ * agent's inbox directory? Filenames arrive in messages_out content from
+ * the source agent — under a multi-agent setup with heterogenous providers
+ * (or a compromised / hallucinating sub-agent) they can't be trusted.
+ *
+ * Rejects:
+ *   - empty string
+ *   - `.` / `..` (traversal sentinels that path.basename returns as-is)
+ *   - anything containing a path separator (`/` or `\`) or NUL
+ *   - any value where `path.basename(name) !== name`, catching OS-specific
+ *     separators and covering drives/prefixes on Windows runtimes
+ */
+export function isSafeAttachmentName(name: string): boolean {
+  if (typeof name !== 'string' || name.length === 0) return false;
+  if (name === '.' || name === '..') return false;
+  if (/[\\/\0]/.test(name)) return false;
+  return path.basename(name) === name;
+}
+
+/**
  * Copy file attachments from the source agent's outbox into the target
  * agent's inbox. Returns attachments using the formatter's existing
  * `{name, type, localPath}` convention — target agent reads `localPath`
