@@ -49,6 +49,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         ca-certificates \
         curl \
         git \
+        poppler-utils \
+        python3 \
+        libreoffice-core \
+        libreoffice-writer \
+        libreoffice-calc \
         tini \
         unzip \
     && if [ "$INSTALL_CJK_FONTS" = "true" ]; then \
@@ -69,6 +74,26 @@ ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 RUN curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}" && \
     install -m 0755 /root/.bun/bin/bun /usr/local/bin/bun && \
     rm -rf /root/.bun
+
+# ---- YouTube-Toolchain (yt-dlp + Deno) --------------------------------------
+# yt-dlp: standalone Python zipapp from official release (uses python3 from apt above)
+RUN curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+    -o /usr/local/bin/yt-dlp.real && chmod +x /usr/local/bin/yt-dlp.real
+
+# Deno: JS runtime for yt-dlp signature challenges. Modern YouTube (2026) requires
+# solving n-sig + player-JS challenges; yt-dlp uses Deno (or Bun) as runtime.
+# Node alone is NOT accepted by yt-dlp's EJS solver.
+RUN curl -fsSL https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip \
+    -o /tmp/deno.zip && \
+    unzip /tmp/deno.zip -d /usr/local/bin/ && \
+    chmod +x /usr/local/bin/deno && \
+    rm /tmp/deno.zip
+
+# yt-dlp wrapper: copies read-only mounted cookies from /workspace/extra to
+# writable /tmp (yt-dlp refreshes the cookie jar during use). Datacenter IPs
+# are blacklisted by YouTube; cookies from a throwaway logged-in account unblock.
+RUN printf '#!/bin/sh\nCOOKIES_SRC=/workspace/extra/youtube-cookies.txt\nCOOKIES_WORK=/tmp/youtube-cookies.txt\nif [ -r "$COOKIES_SRC" ]; then\n  cp "$COOKIES_SRC" "$COOKIES_WORK" 2>/dev/null && exec /usr/local/bin/yt-dlp.real --cookies "$COOKIES_WORK" "$@"\nfi\nexec /usr/local/bin/yt-dlp.real "$@"\n' > /usr/local/bin/yt-dlp && \
+    chmod +x /usr/local/bin/yt-dlp
 
 # ---- agent-runner deps -------------------------------------------------------
 # Deps are cached independently of CLI versions. Source is NOT baked in —
