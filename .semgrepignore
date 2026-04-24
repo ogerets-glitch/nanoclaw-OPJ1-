@@ -1,0 +1,20 @@
+# Stufe-2 Semgrep-Ausschlüsse (2026-04-24)
+# Pfade mit legitimen Mustern, die nicht im Produktions-Runtime-Path liegen:
+
+# Interne Tooling-Skills (Claude Code skills, nicht Service-Code)
+.claude/skills/
+
+# Setup-/Install-Scripts (laufen einmalig, nicht im Service)
+setup/
+
+# Agent-Runner-Binary (läuft im Container, eigene Angriffsfläche)
+container/agent-runner/src/
+
+# Test-Dateien (enthalten oft absichtliche Pattern zu Testzwecken)
+**/*.test.ts
+**/*.spec.ts
+
+# Semgrep-Defaults
+node_modules/
+dist/
+build/
