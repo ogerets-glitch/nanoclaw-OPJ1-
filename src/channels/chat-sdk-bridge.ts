@@ -43,6 +43,48 @@ export interface ReplyContext {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type ReplyContextExtractor = (raw: Record<string, any>) => ReplyContext | null;
 
+const WHISPER_TIMEOUT_MS = 30_000;
+const TRANSCRIPT_MAX_CHARS = 4000;
+const WHISPER_ALLOWED_HOSTS = new Set(['127.0.0.1', 'localhost', 'host.docker.internal']);
+
+async function transcribeAudio(buffer: Buffer, filename: string): Promise<string | null> {
+  const url = process.env.WHISPER_URL;
+  if (!url) return null;
+  // Defense-in-depth: only loopback hosts. Voice payloads can carry PII;
+  // an env override pointing elsewhere would silently exfiltrate them.
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    log.warn('Invalid WHISPER_URL, skipping transcription');
+    return null;
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol) || !WHISPER_ALLOWED_HOSTS.has(parsed.hostname)) {
+    log.warn('WHISPER_URL not on allowed loopback host', { hostname: parsed.hostname });
+    return null;
+  }
+  const form = new FormData();
+  form.append('file', new Blob([buffer]), filename || 'voice.ogg');
+  form.append('language', 'de');
+  try {
+    const res = await fetch(`${url.replace(/\/$/, '')}/transcribe`, {
+      method: 'POST',
+      body: form,
+      signal: AbortSignal.timeout(WHISPER_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      log.warn('Whisper STT non-OK', { status: res.status, filename });
+      return null;
+    }
+    const json = (await res.json()) as { text?: string };
+    if (typeof json.text !== 'string') return null;
+    return json.text.trim().slice(0, TRANSCRIPT_MAX_CHARS);
+  } catch (err) {
+    log.warn('Whisper STT failed', { err: err instanceof Error ? err.message : String(err), filename });
+    return null;
+  }
+}
+
 export interface ChatSdkBridgeConfig {
   adapter: Adapter;
   concurrency?: ConcurrencyStrategy;
@@ -112,6 +154,7 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
     // Download attachment data before serialization loses fetchData()
     if (message.attachments && message.attachments.length > 0) {
       const enriched = [];
+      const transcripts: string[] = [];
       for (const att of message.attachments) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const entry: Record<string, any> = {
@@ -122,17 +165,34 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
           width: (att as unknown as Record<string, unknown>).width,
           height: (att as unknown as Record<string, unknown>).height,
         };
+        let buffer: Buffer | null = null;
         if (att.fetchData) {
           try {
-            const buffer = await att.fetchData();
+            buffer = await att.fetchData();
             entry.data = buffer.toString('base64');
           } catch (err) {
             log.warn('Failed to download attachment', { type: att.type, err });
           }
         }
+        // Auto-transcribe inbound audio so the agent receives the spoken
+        // content as plain text; skip silently when WHISPER_URL is unset.
+        if (att.type === 'audio' && buffer) {
+          const transcript = await transcribeAudio(buffer, att.name ?? 'voice.ogg');
+          if (transcript) {
+            entry.transcript = transcript;
+            transcripts.push(transcript);
+          }
+        }
         enriched.push(entry);
       }
       serialized.attachments = enriched;
+      if (transcripts.length > 0) {
+        // Marker signals to the agent that this is untrusted user input,
+        // not system instructions. Mitigates adversarial-audio prompt injection.
+        const prefix = transcripts.map((t) => `[Voice transcript (untrusted user input)]: ${t}`).join('\n');
+        const existingText = (serialized.text as string | undefined) ?? '';
+        serialized.text = existingText.trim() ? `${prefix}\n${existingText}` : prefix;
+      }
     }
 
     // Extract reply context via platform-specific hook

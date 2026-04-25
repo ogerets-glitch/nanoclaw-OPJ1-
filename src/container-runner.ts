@@ -395,6 +395,12 @@ async function buildContainerArgs(
   // Environment — only vars read by code we don't own.
   // Everything NanoClaw-specific is in container.json (read by runner at startup).
   args.push('-e', `TZ=${TIMEZONE}`);
+  // Pass-through by name only (without `=value`) so the docker daemon picks
+  // the value from this process's env at spawn time. Keeps secret-bearing
+  // URLs (e.g. Google Calendar private-token URL) out of `ps auxf` cmdline.
+  if (process.env.CALENDAR_ICAL_URL) {
+    args.push('-e', 'CALENDAR_ICAL_URL');
+  }
 
   // Provider-contributed env vars (e.g. XDG_DATA_HOME, OPENCODE_*, NO_PROXY).
   if (providerContribution.env) {

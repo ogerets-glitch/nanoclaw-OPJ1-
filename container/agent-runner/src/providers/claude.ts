@@ -55,6 +55,10 @@ const TOOL_ALLOWLIST = [
   'Skill',
   'NotebookEdit',
   'mcp__nanoclaw__*',
+  'mcp__claude_ai_Open_Brain__*',
+  'mcp__claude_ai_Rechtsrecherche__*',
+  'mcp__claude_ai_Arbeitsmarkt__*',
+  'mcp__claude_ai_Location__*',
 ];
 
 interface SDKUserMessage {

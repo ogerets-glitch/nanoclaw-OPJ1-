@@ -39,3 +39,9 @@ groups/*
 .nanoclaw/
 
 agents-sdk-docs
+
+# Local-only assets that must not leak into git
+container/ssh-keys/
+secrets/
+nanoclaw.pid
+node_modules_backup/
