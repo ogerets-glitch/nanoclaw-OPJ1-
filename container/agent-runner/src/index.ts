@@ -31,10 +31,27 @@ import { buildSystemPromptAddendum } from './destinations.js';
 // Provider skills append imports to providers/index.ts.
 import './providers/index.js';
 import { createProvider, type ProviderName } from './providers/factory.js';
+import type { McpServerConfig } from './providers/types.js';
 import { runPollLoop } from './poll-loop.js';
 
 function log(msg: string): void {
   console.error(`[agent-runner] ${msg}`);
+}
+
+function normalizeMcpServer(entry: Record<string, unknown>): McpServerConfig | null {
+  if (typeof entry.command === 'string' && Array.isArray(entry.args)) {
+    return {
+      command: entry.command,
+      args: entry.args as string[],
+      env: (entry.env as Record<string, string>) ?? {},
+    };
+  }
+  if (typeof entry.url === 'string') {
+    const type = (entry.type as string) === 'sse' ? 'sse' : 'http';
+    const headers = entry.headers as Record<string, string> | undefined;
+    return { type, url: entry.url, ...(headers ? { headers } : {}) };
+  }
+  return null;
 }
 
 const CWD = '/workspace/agent';
@@ -72,8 +89,10 @@ async function main(): Promise<void> {
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const mcpServerPath = path.join(__dirname, 'mcp-tools', 'index.ts');
 
-  // Build MCP servers config: nanoclaw built-in + any from container.json
-  const mcpServers: Record<string, { command: string; args: string[]; env: Record<string, string> }> = {
+  // Build MCP servers config: nanoclaw built-in + container.json + project .mcp.json.
+  // We merge .mcp.json explicitly because the Claude SDK ignores
+  // setting-source discovery once `mcpServers` is passed at the API level.
+  const mcpServers: Record<string, McpServerConfig> = {
     nanoclaw: {
       command: 'bun',
       args: ['run', mcpServerPath],
@@ -83,7 +102,29 @@ async function main(): Promise<void> {
 
   for (const [name, serverConfig] of Object.entries(config.mcpServers)) {
     mcpServers[name] = serverConfig;
-    log(`Additional MCP server: ${name} (${serverConfig.command})`);
+    const desc = 'command' in serverConfig ? serverConfig.command : serverConfig.url;
+    log(`Additional MCP server (container.json): ${name} (${desc})`);
+  }
+
+  const projectMcpPath = path.join(CWD, '.mcp.json');
+  if (fs.existsSync(projectMcpPath)) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(projectMcpPath, 'utf8')) as {
+        mcpServers?: Record<string, Record<string, unknown>>;
+      };
+      for (const [name, entry] of Object.entries(raw.mcpServers ?? {})) {
+        const normalized = normalizeMcpServer(entry);
+        if (normalized) {
+          mcpServers[name] = normalized;
+          const desc = 'command' in normalized ? normalized.command : normalized.url;
+          log(`Project MCP server (.mcp.json): ${name} (${desc})`);
+        } else {
+          log(`Skipping malformed MCP server entry in .mcp.json: ${name}`);
+        }
+      }
+    } catch (err) {
+      log(`Failed to parse .mcp.json: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   const provider = createProvider(providerName, {
