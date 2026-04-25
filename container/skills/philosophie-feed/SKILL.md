@@ -42,12 +42,32 @@ Die JSON-Datei enthält:
 
 ## Nachricht formatieren — Drei Schichten
 
-### Schicht 1: Primärtext
-Gib den Originaltext VOLLSTÄNDIG wieder — kürze oder fasse NICHT zusammen.
-Der Leser soll den gesamten gelieferten Text sehen, weil deine Reflexion
-sich darauf bezieht. Wenn der Text Gleichnisse, Dialoge oder mehrere
-Episoden enthält (z.B. die Parabel vom Schaf UND die Geschichte der drei
-Brüder UND den Fährmann), zeige alle.
+### Schicht 1: Primärtext (strukturbasiert gekürzt)
+
+Gib den Primärtext GEKÜRZT wieder — nicht vollständig. Das intern verfügbare
+Material (das ganze `primary_text`-Feld) bleibt die Basis deiner Reflexion —
+du liest den kompletten Originaltext und reflektierst darauf. Telegram bekommt
+aber eine dichte Auswahl, kein Wortlaut-Dump.
+
+**Werkspezifische Regeln:**
+
+- **I Ging**: Urteil + Das Bild sind Pflicht (werden nie gekürzt). Einzellinien
+  nur die, auf die sich deine Reflexion stützt — meist ein bis zwei von sechs,
+  nicht alle sechs.
+- **Lü Bu We**: Eine oder zwei Gleichnisse, nicht alle drei — die, auf die sich
+  deine Reflexion tatsächlich stützt.
+- **Daodejing / Liezi**: In der Regel kurz genug — kein Kürzen nötig, vollständig zeigen.
+- **Sun Tzu**: Abschnittweise prüfen; bei langen Passagen sinngemäß wie Lü Bu We.
+
+**Transparenz-Hinweis:** Wenn du mehr als eine wesentliche Passage weglässt,
+benenne kurz darunter, was fehlt — z.B.
+`_Gezeigt: Urteil und Das Bild. Einzellinien auf Anfrage._`
+So sieht Oliver, dass gekürzt wurde, und kann den Volltext nachfordern.
+
+**Regel für die Auswahl:** Beziehe dich in der Reflexion (Schicht 3) NUR auf
+Passagen, die du in Schicht 1 gezeigt hast. Wenn eine Linie für die Reflexion
+zentral ist, muss sie in Schicht 1 stehen — nicht nur im internen Lesetext.
+
 Setze Quelle, Kapitel und Titel darüber.
 Formatierung: Telegram-Format (*bold* für Titel, Text als Block).
 
