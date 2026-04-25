@@ -47,9 +47,8 @@ function normalizeMcpServer(entry: Record<string, unknown>): McpServerConfig | n
     };
   }
   if (typeof entry.url === 'string') {
-    const type = (entry.type as string) === 'sse' ? 'sse' : 'http';
     const headers = entry.headers as Record<string, string> | undefined;
-    return { type, url: entry.url, ...(headers ? { headers } : {}) };
+    return { type: 'http', url: entry.url, ...(headers ? { headers } : {}) };
   }
   return null;
 }
