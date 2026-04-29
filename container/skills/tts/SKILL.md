@@ -1,7 +1,7 @@
 ---
 name: tts
 description: "Text-to-Speech: Schickt eine Sprachausgabe (OGG/Opus) per Telegram. IMMER nutzen, wenn der User aktiv per Voice antworten will ('antworte mir per Voice', 'sag mir das laut', 'als Sprachnachricht'), oder wenn `voice on` aktiviert wurde und eine substanzielle Antwort vorliegt. Toggle-Verhalten: 'voice on' / 'voice off' / 'voice status' verwalten den Modus über eine Marker-Datei. NICHT bei: Code-Ausgabe, Tabellen, langen technischen Listings (dann Text bevorzugen). Verwendet TTS-OpenAI (Stimme onyx) mit Piper-Fallback."
-allowed-tools: Bash(curl:*), Bash(rm:*), Bash(mkdir:*), Bash(test:*), Bash(stat:*), Bash(date:*), Read, Write
+allowed-tools: Bash(curl:*), Bash(python3:*), Bash(rm:*), Bash(mkdir:*), Bash(test:*), Bash(stat:*), Bash(date:*), Read, Write
 ---
 
 # TTS — Sprachausgabe via Telegram
@@ -35,19 +35,22 @@ TS=$(date +%s)
 OUT=/workspace/agent/data/outbox/voice-${TS}.ogg
 mkdir -p /workspace/agent/data/outbox
 
+# JSON-Body sicher bauen (Sonderzeichen im Text korrekt escapen)
+BODY="$(TEXT="$TEXT" python3 -c 'import json,os; print(json.dumps({"text": os.environ["TEXT"]}))')"
+
 # Primär: TTS-OpenAI (Stimme onyx)
 HTTP=$(curl -s -o "$OUT" -w "%{http_code}" \
   -X POST http://host.docker.internal:8385/synthesize \
   -H 'Content-Type: application/json' \
   --max-time 30 \
-  -d "$(jq -nc --arg t "$TEXT" '{text: $t}')")
+  -d "$BODY")
 
 # Fallback: Piper bei 5xx
 if [ "$HTTP" -ge 500 ] || [ ! -s "$OUT" ]; then
   rm -f "$OUT"
   curl -s -o "$OUT" -X POST http://host.docker.internal:8386/synthesize \
     -H 'Content-Type: application/json' --max-time 30 \
-    -d "$(jq -nc --arg t "$TEXT" '{text: $t}')"
+    -d "$BODY"
 fi
 ```
 
@@ -73,7 +76,6 @@ mcp__nanoclaw__send_file({ path: "/workspace/agent/data/outbox/voice-<ts>.ogg", 
 - **TTS-OpenAI 5xx:** automatischer Piper-Fallback (siehe oben).
 - **Beide Endpoints offline:** Skill abbrechen, dem User mitteilen „Voice-Service offline, Antwort nur als Text".
 - **Leere Datei:** Wenn `stat -c %s "$OUT"` 0 zurückgibt, war der Aufruf erfolglos — gleiche Fehlerbehandlung.
-- **`jq` fehlt:** Sollte nie passieren (im Bun-Container vorinstalliert), aber falls doch: `curl ... -d "{\"text\":\"$TEXT\"}"` ohne jq (Vorsicht bei Sonderzeichen im Text).
 
 ## Sicherheit
 

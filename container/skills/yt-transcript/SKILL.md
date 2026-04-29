@@ -1,7 +1,7 @@
 ---
 name: yt-transcript
 description: "YouTube-Video-Inhalte verstehen und zusammenfassen. IMMER nutzen, wenn Oliver einen YouTube-Link schickt und eine Zusammenfassung/Analyse/Einordnung des Inhalts will. Weg: Gemini API — sie verarbeitet die YouTube-URL intern, Hetzner-IP irrelevant. Trigger: youtube.com-URLs, youtu.be-URLs, 'fass das Video zusammen', 'was sagt der in dem Video', 'worum geht es'. Keine Fremdquellen-Rekonstruktion: wenn Gemini nichts liefert, das ehrlich sagen statt zu konfabulieren."
-allowed-tools: Bash(curl:*), Bash(jq:*), Bash(grep:*), Bash(cat:*), Bash(bash:*), Bash(rm:*), Read
+allowed-tools: Bash(curl:*), Bash(python3:*), Bash(grep:*), Bash(cat:*), Bash(bash:*), Bash(rm:*), Read
 ---
 
 # YouTube-Video-Inhalt holen
@@ -16,10 +16,13 @@ Aus der Nachricht die YouTube-URL extrahieren (`https://www.youtube.com/watch?v=
 
 ### 2. Gemini-Aufruf mit Model-Fallback-Kette
 
-Der Key liegt im vom Container gemounteten Skill-Config-Pfad. Zuerst einlesen, dann API-Call:
+Der Key wird primär aus der Container-Env-Var (vom OneCLI-Gateway als Marker injiziert, vom Gateway-Proxy outbound durch den echten Vault-Wert ersetzt). Falls leer, Legacy-Fallback auf den alten Skill-Config-Pfad. Auth läuft über den `x-goog-api-key`-Header — **nicht** über den URL-Parameter `?key=`, weil der OneCLI-Gateway Header injizieren/überschreiben kann, aber keine URL-Parameter.
 
 ```bash
-GEMINI_API_KEY="$(grep '^GEMINI_API_KEY=' /workspace/global/config/last30days/.env | cut -d= -f2-)"
+# Primär Container-Env-Var (OneCLI-Gateway-Pfad). Legacy-Fallback auf Config-Datei.
+if [[ -z "$GEMINI_API_KEY" ]]; then
+  GEMINI_API_KEY="$(grep '^GEMINI_API_KEY=' /workspace/global/config/last30days/.env 2>/dev/null | cut -d= -f2-)"
+fi
 
 VIDEO_URL="<die-url-aus-olivers-nachricht>"
 PROMPT="Fasse dieses Video strukturiert auf Deutsch zusammen: Kernthese in 1–2 Sätzen, danach die wichtigsten Argumente mit Zeitstempeln (MM:SS), zum Schluss eine kurze Einordnung (Tonlage, Belastbarkeit, was fehlt). Keine Floskeln."
@@ -28,18 +31,20 @@ PROMPT="Fasse dieses Video strukturiert auf Deutsch zusammen: Kernthese in 1–2
 # Bei 503/429: nach Reihenfolge durchprobieren, jeweils 1× pro Modell.
 MODELS=("gemini-2.5-flash" "gemini-flash-latest" "gemini-2.5-flash-lite")
 for MODEL in "${MODELS[@]}"; do
+  BODY="$(VIDEO_URL="$VIDEO_URL" PROMPT="$PROMPT" python3 -c '
+import json, os
+print(json.dumps({
+  "contents": [{"parts": [
+    {"file_data": {"file_uri": os.environ["VIDEO_URL"]}},
+    {"text": os.environ["PROMPT"]},
+  ]}]
+}))')"
   curl -sS -X POST \
-    "https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=$GEMINI_API_KEY" \
+    "https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent" \
     -H "Content-Type: application/json" \
-    -d "$(jq -n --arg url "$VIDEO_URL" --arg prompt "$PROMPT" '{
-      contents: [{
-        parts: [
-          { file_data: { file_uri: $url } },
-          { text: $prompt }
-        ]
-      }]
-    }')" > /tmp/gemini-response.json
-  ERR_CODE_TEST="$(jq -r '.error.code // empty' /tmp/gemini-response.json)"
+    -H "x-goog-api-key: $GEMINI_API_KEY" \
+    -d "$BODY" > /tmp/gemini-response.json
+  ERR_CODE_TEST="$(python3 -c 'import json; d=json.load(open("/tmp/gemini-response.json")); print(d.get("error",{}).get("code","") or "")' 2>/dev/null)"
   if [[ "$ERR_CODE_TEST" != "503" && "$ERR_CODE_TEST" != "429" ]]; then break; fi
 done
 ```
@@ -47,9 +52,16 @@ done
 Response verarbeiten:
 
 ```bash
-TEXT="$(jq -r '.candidates[0].content.parts[0].text // empty' /tmp/gemini-response.json)"
-ERR_CODE="$(jq -r '.error.code // empty' /tmp/gemini-response.json)"
-ERR_MSG="$(jq -r '.error.message // empty' /tmp/gemini-response.json)"
+TEXT="$(python3 -c 'import json
+d=json.load(open("/tmp/gemini-response.json"))
+try: print(d["candidates"][0]["content"]["parts"][0].get("text","") or "")
+except Exception: print("")' 2>/dev/null)"
+ERR_CODE="$(python3 -c 'import json
+d=json.load(open("/tmp/gemini-response.json"))
+print(d.get("error",{}).get("code","") or "")' 2>/dev/null)"
+ERR_MSG="$(python3 -c 'import json
+d=json.load(open("/tmp/gemini-response.json"))
+print(d.get("error",{}).get("message","") or "")' 2>/dev/null)"
 ```
 
 Wenn `$TEXT` gefüllt ist: direkt an Oliver weiterreichen.

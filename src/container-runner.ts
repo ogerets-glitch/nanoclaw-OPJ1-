@@ -402,6 +402,18 @@ async function buildContainerArgs(
     args.push('-e', 'CALENDAR_ICAL_URL');
   }
 
+  // Forward extra env vars listed in SKILL_FORWARD_ENV (comma-separated names).
+  // Values are typically vault-managed dummies — the OneCLI gateway overwrites
+  // outbound auth headers with the real vault value, so the container-side
+  // value only needs to be truthy for skill-side provider detection.
+  const forwardList = (process.env.SKILL_FORWARD_ENV ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  for (const name of forwardList) {
+    if (process.env[name]) args.push('-e', name);
+  }
+
   // Provider-contributed env vars (e.g. XDG_DATA_HOME, OPENCODE_*, NO_PROXY).
   if (providerContribution.env) {
     for (const [key, value] of Object.entries(providerContribution.env)) {

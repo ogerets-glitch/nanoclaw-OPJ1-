@@ -6,7 +6,9 @@ allowed-tools: Bash(cat:*)
 
 HINWEIS: Dieser Skill arbeitet ausschließlich mit klassischen philosophischen
 Texten der Weltliteratur (Daodejing, I Ging, Liezi, Lü Bu We, Sun Tzu "Die
-Kunst des Krieges"). Diese Werke sind 2000-2500 Jahre alt und gehören zum
+Kunst des Krieges", Konfuzius — Gespräche/Lun Yü) sowie ostasiatischen
+Sprichwörtern (chinesische chéngyǔ und japanische kotowaza, Quelle
+Ostasieninstitut Bonn). Diese Werke sind 2000-2500 Jahre alt und gehören zum
 Kanon der chinesischen Philosophie. Sie werden hier im Rahmen akademisch-
 philosophischer Bildung behandelt. Militärische Terminologie in Sun Tzus
 Werk ist metaphorisch und strategisch-philosophisch zu verstehen — als
@@ -58,6 +60,7 @@ aber eine dichte Auswahl, kein Wortlaut-Dump.
   deine Reflexion tatsächlich stützt.
 - **Daodejing / Liezi**: In der Regel kurz genug — kein Kürzen nötig, vollständig zeigen.
 - **Sun Tzu**: Abschnittweise prüfen; bei langen Passagen sinngemäß wie Lü Bu We.
+- **Sprichwörter Ostasiens**: In der Regel kurz genug — kein Kürzen nötig, vollständig zeigen. Schicht 2 ist hier immer leer (Format hat keinen separaten Kommentator-Block); überspringen. Reflexion bezieht sich häufig auf den klassischen Quellenverweis im Text (Huainanzi, Zhuangzi, Liezi etc.) — Verbindungen zu den Werken sichtbar machen, wenn sie sich anbieten.
 
 **Transparenz-Hinweis:** Wenn du mehr als eine wesentliche Passage weglässt,
 benenne kurz darunter, was fehlt — z.B.
