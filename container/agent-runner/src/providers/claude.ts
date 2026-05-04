@@ -228,14 +228,41 @@ function createPreCompactHook(assistantName?: string): HookCallback {
 // ── Provider ──
 
 /**
- * Claude Code auto-compacts context at this window (tokens). Kept here so
- * the generic bootstrap doesn't need to know about Claude-specific env vars.
+ * Auto-compact threshold (tokens). Forwarded to the Claude Code CLI subprocess.
  *
- * Operator override: set CLAUDE_CODE_AUTO_COMPACT_WINDOW in the host env to
- * raise or lower the threshold without editing source — useful when running
- * with a 1M-context model variant or when emergency-tuning a deployment.
+ * IMPORTANT — this is currently effectively no-op for our setup. Verified
+ * 2026-05-04 by binary-grep of claude-code 2.1.116 and 2.1.126:
+ *
+ *  - The CLI clamps the configured value via `min(model_window, AUTO_COMPACT_WINDOW)`.
+ *  - The CLI's model table reports `claude-opus-4-7` as a 200k-window model
+ *    regardless of API capability — so 850000 collapses to 200000.
+ *  - Compact then triggers at ~70% of 200k ≈ 135–140k (matches transcript:
+ *    `compactMetadata.preTokens` 133069 / 133892 / 138466).
+ *
+ * The only env var that lifts the model-side cap is CLAUDE_CODE_MAX_CONTEXT_TOKENS
+ * (below), but the CLI gates it on `DISABLE_COMPACT` being truthy — which would
+ * turn off auto-compact entirely. There is no path in 2.1.x to "1M window AND
+ * auto-compact at 850k" simultaneously; the two features are mutually exclusive
+ * in the CLI's source.
+ *
+ * Kept set for forward-compatibility: if a future CLI version decouples the
+ * vars, this value becomes effective without code change. Operator override
+ * via the host env still works.
  */
-const CLAUDE_CODE_AUTO_COMPACT_WINDOW = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW || '165000';
+const CLAUDE_CODE_AUTO_COMPACT_WINDOW = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW || '850000';
+
+/**
+ * Model-side context cap override. CURRENTLY NO-OP in claude-code 2.1.x.
+ *
+ * Verified 2026-05-04 against 2.1.116 and 2.1.126: this var is read in
+ * exactly one place, behind the guard `if (truthy(DISABLE_COMPACT) && this)`.
+ * Without DISABLE_COMPACT also set (which we don't set, because we want
+ * auto-compact), the parseInt() branch is never entered and the value is
+ * silently ignored.
+ *
+ * See AUTO_COMPACT_WINDOW comment above for why we can't just set both.
+ */
+const CLAUDE_CODE_MAX_CONTEXT_TOKENS = process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS || '1000000';
 
 /**
  * Stale-session detection. Matches Claude Code's error text when a
@@ -259,6 +286,7 @@ export class ClaudeProvider implements AgentProvider {
     this.env = {
       ...(options.env ?? {}),
       CLAUDE_CODE_AUTO_COMPACT_WINDOW,
+      CLAUDE_CODE_MAX_CONTEXT_TOKENS,
     };
   }
 
@@ -287,6 +315,7 @@ export class ClaudeProvider implements AgentProvider {
         permissionMode: 'bypassPermissions',
         allowDangerouslySkipPermissions: true,
         settingSources: ['project', 'user'],
+        thinking: { type: 'adaptive' as const },
         mcpServers: this.mcpServers,
         hooks: {
           PreToolUse: [{ hooks: [preToolUseHook] }],
