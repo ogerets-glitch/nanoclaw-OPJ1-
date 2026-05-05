@@ -167,7 +167,11 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
   let setupConfig: ChannelSetup;
   let gatewayAbort: AbortController | null = null;
 
-  async function messageToInbound(message: ChatMessage, isMention: boolean): Promise<InboundMessage> {
+  async function messageToInbound(
+    message: ChatMessage,
+    isMention: boolean,
+    isGroup?: boolean,
+  ): Promise<InboundMessage> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const serialized = message.toJSON() as Record<string, any>;
 
@@ -242,6 +246,7 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
       content: serialized,
       timestamp: message.metadata.dateSent.toISOString(),
       isMention,
+      isGroup,
     };
   }
 
@@ -275,13 +280,17 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
       // wirings still fire on in-thread mentions.
       chat.onSubscribedMessage(async (thread, message) => {
         const channelId = adapter.channelIdFromThreadId(thread.id);
-        await setupConfig.onInbound(channelId, thread.id, await messageToInbound(message, message.isMention === true));
+        await setupConfig.onInbound(
+          channelId,
+          thread.id,
+          await messageToInbound(message, message.isMention === true, true),
+        );
       });
 
       // @mention in an unsubscribed thread — SDK-confirmed bot mention.
       chat.onNewMention(async (thread, message) => {
         const channelId = adapter.channelIdFromThreadId(thread.id);
-        await setupConfig.onInbound(channelId, thread.id, await messageToInbound(message, true));
+        await setupConfig.onInbound(channelId, thread.id, await messageToInbound(message, true, true));
       });
 
       // DMs — by definition addressed to the bot. Thread id flows through
@@ -296,7 +305,7 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
           sender: (message.author as any)?.fullName ?? (message.author as any)?.userId ?? 'unknown',
           threadId: thread.id,
         });
-        await setupConfig.onInbound(channelId, thread.id, await messageToInbound(message, true));
+        await setupConfig.onInbound(channelId, thread.id, await messageToInbound(message, true, false));
       });
 
       // Plain messages in unsubscribed threads.
@@ -304,14 +313,14 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
       // Chat SDK dispatch (handling-events.mdx §"Handler dispatch order") is
       // exclusive: subscribed → onSubscribedMessage; unsubscribed+mention →
       // onNewMention; unsubscribed+pattern-match → onNewMessage. Registering
-      // with `/./` lets the router see every plain message on every
-      // unsubscribed thread the bot can see. The router short-circuits via
+      // with `/[\s\S]*/` lets the router see every plain message (including
+      // media-only messages with empty text) on every unsubscribed thread the
       // getMessagingGroupWithAgentCount (~1 DB read) for unwired channels,
       // so forwarding every one is cheap enough to not need a bridge-side
       // flood gate.
-      chat.onNewMessage(/./, async (thread, message) => {
+      chat.onNewMessage(/[\s\S]*/, async (thread, message) => {
         const channelId = adapter.channelIdFromThreadId(thread.id);
-        await setupConfig.onInbound(channelId, thread.id, await messageToInbound(message, false));
+        await setupConfig.onInbound(channelId, thread.id, await messageToInbound(message, false, true));
       });
 
       // Handle button clicks (ask_user_question)
@@ -590,7 +599,10 @@ async function handleForwardedEvent(
     // type 3 = MessageComponent (button/select)
     if (interaction.type === 3) {
       const customId = (interaction.data as Record<string, unknown>)?.custom_id as string;
-      const user = (interaction.member as Record<string, unknown>)?.user as Record<string, string> | undefined;
+      // In guilds the clicker is at interaction.member.user; in DMs it's interaction.user directly.
+      const user =
+        ((interaction.member as Record<string, unknown>)?.user as Record<string, string> | undefined) ??
+        (interaction.user as Record<string, string> | undefined);
       const interactionId = interaction.id as string;
       const interactionToken = interaction.token as string;
 
