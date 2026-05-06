@@ -1,7 +1,7 @@
 ---
 name: philosophie-feed
-description: "Tägliche Philosophie-Lesung: Liest den vorbereiteten Quelltext und generiert eine persönliche Reflexion"
-allowed-tools: Bash(cat:*)
+description: "Philosophie-Lesung auf Anfrage: triggert eine frische Quelltext-Auswahl via Refresh-Endpoint und generiert eine persönliche Reflexion. Nur auf explizite Aufforderung — kein Daily-Push."
+allowed-tools: Bash(cat:*), Bash(curl:*)
 ---
 
 HINWEIS: Dieser Skill arbeitet ausschließlich mit klassischen philosophischen
@@ -19,17 +19,27 @@ operative Militäranleitung.
 
 ## Trigger
 
-Wenn Oliver `/philosophie` schreibt oder nach der Tageslesung fragt.
+Wenn Oliver `/philosophie` schreibt oder explizit nach einer Lesung fragt. Es gibt seit 06.05.2026 keinen täglichen Auto-Push mehr — die Lesung wird ausschließlich auf Anfrage erzeugt (Olivers Wunsch).
 
-## Dateizugriff
+## Frischen Quelltext holen + lesen
 
-Lies die JSON-Datei per Bash:
+Schritt 1 — Refresh-Endpoint anstossen. Der Endpoint läuft auf dem Host und triggert das Generator-Skript synchron, schreibt die neue JSON nach `/opt/shared/philosophie_today.json` und gibt sie als Response zurück.
+
+```bash
+curl -sS -m 120 http://host.docker.internal:8390/refresh
+```
+
+Antwortzeiten:
+- **3–5 s** wenn die Quelle „Sprichwörter Ostasiens" oder eine andere Quelle ohne LLM-Pass ist.
+- **30–90 s** bei PDF-Quellen mit Master-Sun-Splitting (Sun Tzu) oder längerer Verarbeitung.
+
+Schritt 2 — Wenn der Refresh-Endpoint nicht erreichbar ist (Host-Service down, Netzwerk-Fehler), fallback auf den letzten gespeicherten Stand:
 
 ```bash
 cat /workspace/extra/shared/philosophie_today.json
 ```
 
-Parse das JSON und verwende die Felder wie unten beschrieben. Versuche NICHT, die Datei über MCP oder andere Wege zu laden — nur per cat/Bash.
+Beide Wege liefern dasselbe JSON-Schema. Parse die Antwort und verwende die Felder wie unten beschrieben. Versuche NICHT, die Datei über MCP oder andere Wege zu laden — nur per curl bzw. cat.
 
 ## Datenformat
 
@@ -101,9 +111,9 @@ Beende die Nachricht so, dass Oliver darauf antworten kann — eine offene Frage
 
 ## Fehlerbehandlung
 
-- Falls die Datei nicht existiert: "Heute ist noch keine Lesung vorbereitet. Der Cronjob läuft um 08:00."
-- Falls die Datei nicht lesbar ist: Fehlermeldung an Oliver, kein stilles Scheitern.
-- Falls das JSON kein primary_text enthält oder dieser leer ist: "Der Extraktor hat heute keinen Text gefunden. Sag Alfred Bescheid."
+- Falls der Refresh-Endpoint einen 5xx-Fehler liefert: erst den Fallback (`cat /workspace/extra/shared/philosophie_today.json`) versuchen und Oliver transparent erklären, dass der Refresh fehlgeschlagen ist und du eine ältere Lesung zeigst (mit dem Datum aus `_refreshed_at` in der JSON).
+- Falls weder Endpoint noch Datei verfügbar sind: Fehlermeldung an Oliver, kein stilles Scheitern.
+- Falls das JSON kein primary_text enthält oder dieser leer ist: "Der Generator hat heute keinen Text gefunden. Sag Claude Code Bescheid — möglicherweise ein PDF- oder Splitter-Problem."
 
 ## Formatierung
 
