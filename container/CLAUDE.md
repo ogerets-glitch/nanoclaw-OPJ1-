@@ -19,3 +19,18 @@ A core part of your job and the main thing that defines how useful you are to th
 ## Conversation history
 
 The `conversations/` folder in your workspace holds searchable transcripts of past sessions with this group. Use it to recall prior context when a request references something that happened before. For structured long-lived data, prefer dedicated files (`customers.md`, `preferences.md`, etc.); split any file over ~500 lines into a folder with an index.
+
+## Browser für Web-Inhalte
+
+Reihenfolge der Werkzeuge, wenn du eine Webseite abrufen musst:
+
+1. **Statisches HTML** (Title, Text, JSON-API): `curl` reicht. Wenn nötig, `pandoc -f html -t plain` zum Strippen.
+2. **JavaScript-Rendering, Cookies, Stealth, Goku-WAF-Bypass:** Verbinde dich via Chrome DevTools Protocol auf den Host-Obscura. Die WebSocket-URL liegt in der Env-Variable `BROWSER_CDP_URL` (Default: `ws://host.docker.internal:9222/devtools/browser`). Beispiel mit `puppeteer-core`:
+   ```js
+   import puppeteer from 'puppeteer-core';
+   const browser = await puppeteer.connect({ browserWSEndpoint: process.env.BROWSER_CDP_URL });
+   ```
+   Mit `playwright-core`: `chromium.connectOverCDP(process.env.BROWSER_CDP_URL.replace('/devtools/browser', ''))`.
+3. **Fallback wenn Obscura hakt** (z.B. eine Site verträgt Obscuras V8-Lücken nicht): Du hast `chromium` im Container vorinstalliert (`/usr/bin/chromium`). Starte es lokal mit `--headless --disable-gpu --no-sandbox`. Kostet mehr Speicher, ist aber ein vollständiger Browser.
+
+Sicherheitsregel: **Keine echten Logins** (Banking, Gmail, ECAS) über Obscura — der Maintainer ist anonym. Für Recherche und Scraping ok.

@@ -98,6 +98,196 @@ function unescapeIcal(str) {
     .replace(/\\\\/g, '\\');
 }
 
+// ── RRULE helpers ───────────────────────────────────────────────────────────
+
+const DAY_MAP = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
+const SUPPORTED_FREQ = new Set(['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY']);
+
+function parseRRule(value) {
+  const parts = {};
+  for (const part of value.split(';')) {
+    if (!part) continue;
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    parts[part.slice(0, eq).toUpperCase()] = part.slice(eq + 1);
+  }
+  return parts;
+}
+
+function parseUntil(s) {
+  const parsed = parseIcalDate(s);
+  if (!parsed) return null;
+  // For DATE-only UNTIL, treat as end-of-day so same-day events still fit.
+  if (parsed.allDay) return new Date(parsed.date.getTime() + 86400000 - 1);
+  return parsed.date;
+}
+
+function parseByDay(s) {
+  const m = s.match(/^(-?\d+)?(SU|MO|TU|WE|TH|FR|SA)$/);
+  if (!m) return null;
+  return {
+    ordinal: m[1] ? parseInt(m[1], 10) : null,
+    weekday: DAY_MAP[m[2]],
+  };
+}
+
+function nthWeekdayOfMonth(year, month, weekday, ordinal) {
+  if (ordinal > 0) {
+    const first = new Date(year, month, 1);
+    const offset = (weekday - first.getDay() + 7) % 7;
+    const day = 1 + offset + (ordinal - 1) * 7;
+    const lastDay = new Date(year, month + 1, 0).getDate();
+    return day > lastDay ? null : day;
+  }
+  const lastDate = new Date(year, month + 1, 0);
+  const offset = (lastDate.getDay() - weekday + 7) % 7;
+  const day = lastDate.getDate() - offset + (ordinal + 1) * 7;
+  return day < 1 ? null : day;
+}
+
+function makeInstance(master, instStart, duration) {
+  return {
+    summary: master.summary,
+    location: master.location,
+    description: master.description,
+    start: { date: new Date(instStart), allDay: master.start.allDay },
+    end: master.end
+      ? { date: new Date(instStart.getTime() + duration), allDay: master.end.allDay }
+      : null,
+    status: master.status,
+  };
+}
+
+function expandRRule(master, rrule, exdates, rangeStart, rangeEnd) {
+  const freq = rrule.FREQ;
+  if (!SUPPORTED_FREQ.has(freq)) return [master];
+
+  const interval = Math.max(1, parseInt(rrule.INTERVAL ?? '1', 10) || 1);
+  const count = rrule.COUNT ? parseInt(rrule.COUNT, 10) : Infinity;
+  const until = rrule.UNTIL ? parseUntil(rrule.UNTIL) : null;
+  const wkstDay = DAY_MAP[rrule.WKST] ?? 1;
+
+  const masterStart = master.start.date;
+  const masterEnd = master.end ? master.end.date : null;
+  const duration = masterEnd
+    ? masterEnd.getTime() - masterStart.getTime()
+    : (master.start.allDay ? 86400000 : 0);
+
+  const instances = [];
+  let generated = 0;
+  const MAX_ITER = 5000;
+
+  // Returns false to stop expansion entirely.
+  const tryAdd = (instStart) => {
+    if (until && instStart > until) return false;
+    if (generated >= count) return false;
+    if (instStart >= rangeEnd) return false;
+    generated++;
+    if (!exdates.has(instStart.getTime())) {
+      const instEnd = new Date(instStart.getTime() + duration);
+      if (instEnd > rangeStart) {
+        instances.push(makeInstance(master, instStart, duration));
+      }
+    }
+    return true;
+  };
+
+  if (freq === 'DAILY') {
+    const cursor = new Date(masterStart);
+    for (let iter = 0; iter < MAX_ITER; iter++) {
+      if (cursor >= rangeEnd) break;
+      if (!tryAdd(new Date(cursor))) break;
+      cursor.setDate(cursor.getDate() + interval);
+    }
+  } else if (freq === 'WEEKLY') {
+    const byDayList = rrule.BYDAY
+      ? rrule.BYDAY.split(',').map(s => {
+          const m = s.trim().match(/^-?\d*(SU|MO|TU|WE|TH|FR|SA)$/);
+          return m ? DAY_MAP[m[1]] : undefined;
+        }).filter(d => d !== undefined)
+      : [masterStart.getDay()];
+
+    if (byDayList.length === 0) byDayList.push(masterStart.getDay());
+
+    const sortedDays = [...byDayList].sort(
+      (a, b) => ((a - wkstDay + 7) % 7) - ((b - wkstDay + 7) % 7),
+    );
+
+    const weekStart = new Date(
+      masterStart.getFullYear(), masterStart.getMonth(), masterStart.getDate(),
+    );
+    while (weekStart.getDay() !== wkstDay) {
+      weekStart.setDate(weekStart.getDate() - 1);
+    }
+
+    weekLoop:
+    for (let iter = 0; iter < MAX_ITER; iter++) {
+      if (weekStart >= rangeEnd) break;
+      for (const wd of sortedDays) {
+        const offset = (wd - wkstDay + 7) % 7;
+        const inst = new Date(weekStart);
+        inst.setDate(inst.getDate() + offset);
+        inst.setHours(
+          masterStart.getHours(), masterStart.getMinutes(), masterStart.getSeconds(), 0,
+        );
+        if (inst < masterStart) continue;
+        if (!tryAdd(inst)) break weekLoop;
+      }
+      weekStart.setDate(weekStart.getDate() + 7 * interval);
+    }
+  } else if (freq === 'MONTHLY') {
+    let year = masterStart.getFullYear();
+    let month = masterStart.getMonth();
+
+    monthLoop:
+    for (let iter = 0; iter < MAX_ITER; iter++) {
+      if (new Date(year, month, 1) >= rangeEnd) break;
+
+      const days = [];
+      if (rrule.BYDAY) {
+        for (const part of rrule.BYDAY.split(',')) {
+          const parsed = parseByDay(part.trim());
+          if (!parsed || parsed.ordinal === null) continue;
+          const d = nthWeekdayOfMonth(year, month, parsed.weekday, parsed.ordinal);
+          if (d !== null) days.push(d);
+        }
+      } else if (rrule.BYMONTHDAY) {
+        const lastDay = new Date(year, month + 1, 0).getDate();
+        for (const part of rrule.BYMONTHDAY.split(',')) {
+          const n = parseInt(part.trim(), 10);
+          if (Number.isNaN(n)) continue;
+          if (n > 0 && n <= lastDay) days.push(n);
+          else if (n < 0 && lastDay + n + 1 >= 1) days.push(lastDay + n + 1);
+        }
+      } else {
+        days.push(masterStart.getDate());
+      }
+
+      days.sort((a, b) => a - b);
+      for (const d of days) {
+        const inst = new Date(
+          year, month, d,
+          masterStart.getHours(), masterStart.getMinutes(), masterStart.getSeconds(),
+        );
+        if (inst < masterStart) continue;
+        if (!tryAdd(inst)) break monthLoop;
+      }
+
+      month += interval;
+      while (month > 11) { month -= 12; year++; }
+    }
+  } else if (freq === 'YEARLY') {
+    const cursor = new Date(masterStart);
+    for (let iter = 0; iter < MAX_ITER; iter++) {
+      if (cursor >= rangeEnd) break;
+      if (!tryAdd(new Date(cursor))) break;
+      cursor.setFullYear(cursor.getFullYear() + interval);
+    }
+  }
+
+  return instances;
+}
+
 function parseEvents(text) {
   const unfolded = unfold(text);
   const events = [];
@@ -108,6 +298,7 @@ function parseEvents(text) {
     const lines = block.split('\n');
 
     const props = {};
+    const exdateRaw = [];
     for (const line of lines) {
       // Property line: NAME;PARAMS:VALUE or NAME:VALUE
       const colonIdx = line.indexOf(':');
@@ -122,6 +313,9 @@ function parseEvents(text) {
       // For date fields, keep the full left side (contains TZID etc.)
       if (propName === 'DTSTART' || propName === 'DTEND') {
         props[propName] = { full: fullKey, value };
+      } else if (propName === 'EXDATE') {
+        // EXDATE may appear multiple times and carry comma-separated values
+        exdateRaw.push({ full: fullKey, value });
       } else if (!props[propName]) {
         props[propName] = value;
       }
@@ -132,6 +326,14 @@ function parseEvents(text) {
 
     if (!dtStart) continue;
 
+    const exdates = new Set();
+    for (const ex of exdateRaw) {
+      for (const v of ex.value.split(',')) {
+        const parsed = parseIcalDate(`${ex.full}:${v}`);
+        if (parsed) exdates.add(parsed.date.getTime());
+      }
+    }
+
     events.push({
       summary: unescapeIcal(props.SUMMARY ?? '(Kein Titel)'),
       location: props.LOCATION ? unescapeIcal(props.LOCATION) : null,
@@ -139,6 +341,8 @@ function parseEvents(text) {
       start: dtStart,
       end: dtEnd,
       status: props.STATUS ?? null,
+      rrule: props.RRULE ? parseRRule(props.RRULE) : null,
+      exdates,
     });
   }
 
@@ -154,10 +358,22 @@ endRange.setDate(endRange.getDate() + days);
 
 let events = parseEvents(icalText);
 
-// Filter cancelled events
+// Filter cancelled events (master series)
 events = events.filter(e => e.status !== 'CANCELLED');
 
+// Expand RRULE masters into concrete instances within [startOfToday, endRange)
+const expanded = [];
+for (const ev of events) {
+  if (ev.rrule) {
+    expanded.push(...expandRRule(ev, ev.rrule, ev.exdates, startOfToday, endRange));
+  } else {
+    expanded.push(ev);
+  }
+}
+events = expanded;
+
 // Filter by date range: event overlaps with [startOfToday, endRange)
+// (Expansion already respects this, but single events still need it.)
 events = events.filter(e => {
   const eStart = e.start.date;
   const eEnd = e.end ? e.end.date : (e.start.allDay ? new Date(eStart.getTime() + 86400000) : eStart);

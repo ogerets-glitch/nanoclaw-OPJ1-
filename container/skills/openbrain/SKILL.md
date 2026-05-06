@@ -1,6 +1,6 @@
 ---
 name: openbrain
-description: "Olivers persönliches KI-Gedächtnis (PostgreSQL + pgvector + BM25 + Reranker). Nutze IMMER, wenn etwas in OpenBrain gespeichert, gesucht, aktualisiert, verstärkt oder gelöscht werden soll, oder bei Begriffen wie 'OpenBrain', 'merk dir', 'speicher das', 'ins Gedächtnis', 'notier dir', 'erinner dich an', 'was weißt du über', 'such in OpenBrain', 'verstärke', 'reinforce'. Auch bei 'Was haben wir zu X besprochen?', 'Hast du Erinnerungen an...', 'Schreib das in dein Gedächtnis', oder wenn andere Agents (OPJ1, Claude Code, Cowork) etwas dauerhaft festhalten wollen. Triggert beim Speichern beliebiger Inhalte — MAV-Notizen, Rezepte, Studien, Artikel, Reflexionen, technische Erkenntnisse, Beobachtungen. NICHT bei: juristischer Paragrafenrecherche (→ Rechtsrecherche), reiner Konversation ohne Speicher- oder Suchabsicht."
+description: "Olivers persönliches KI-Gedächtnis (PostgreSQL + pgvector + BM25 + Reranker). Nutze IMMER, wenn etwas in OpenBrain gespeichert, gesucht, aktualisiert, verstärkt oder gelöscht werden soll, oder bei Begriffen wie 'OpenBrain', 'merk dir', 'speicher das', 'ins Gedächtnis', 'notier dir', 'erinner dich an', 'was weißt du über', 'such in OpenBrain', 'verstärke', 'reinforce'. Auch bei 'Was haben wir zu X besprochen?', 'Hast du Erinnerungen an...', 'Schreib das in dein Gedächtnis', oder wenn andere Agents (OPJ1, Claude Code, Cowork) etwas dauerhaft festhalten wollen. Triggert beim Speichern beliebiger Inhalte — MAV-Notizen, Rezepte, Studien, Artikel, Reflexionen, technische Erkenntnisse, Beobachtungen. Auch bei Wartungs-Anfragen: 'Statistik', 'Bericht', 'Übersicht', 'Aufräumen', 'Duplikate prüfen', 'stale Einträge', 'Top-Memories', 'Wartung'. NICHT bei: juristischer Paragrafenrecherche (→ Rechtsrecherche), reiner Konversation ohne Speicher- oder Suchabsicht."
 ---
 
 # OpenBrain — Persistentes KI-Gedächtnis
@@ -40,6 +40,24 @@ Die alte Torwächter-Regel ist abgeschafft (gültig ab 15.04.2026). **Jede Form 
 | `reinforce_memory` | hit_count um 1 erhöhen | `id` (Pflicht) |
 | `delete_memory` | Eintrag löschen | `id` (Pflicht) |
 | `list_tags` | Tag-Vokabular abrufen | `prefix` (optional), `limit` |
+
+### Wartungs-Tools
+
+Zusätzlich zum Kerngeschäft (oben) bietet der Server sieben Wartungs-Tools, die nur bei expliziter Statistik-/Aufräum-Anfrage oder beim wöchentlichen Wartungs-Task triggern:
+
+| Tool | Zweck | Wichtige Parameter |
+|------|-------|---------------------|
+| `browse_recent` | Zuletzt hinzugefügte Einträge in zeitlicher Reihenfolge | `limit`, `offset` |
+| `get_stats` | Server-weite Statistiken (Anzahl, Tag-Verteilung, Aktivität) | — |
+| `get_top_memories` | Meistgenutzte Einträge nach `hit_count` | `limit` |
+| `get_stale_memories` | Alte, ungenutzte Einträge (Lösch-Kandidaten) | `limit`, `min_age_days` |
+| `get_review_candidates` | Einträge, die ein Review brauchen | `limit` |
+| `get_similar_memories` | Duplikat-Suche zu einem konkreten Eintrag | `id`, `limit`, `threshold` |
+| `delete_memories` | Bulk-Löschung mehrerer Einträge | `ids[]` |
+
+**Trigger-Begriffe:** „Statistik", „Bericht", „Übersicht", „Duplikate prüfen", „Aufräumen", „stale Einträge", „Top-Memories", „Wartung". Außerhalb dieser Trigger nicht aufrufen — die Tools machen den normalen Such- und Speicher-Fluss träger.
+
+**Nie eigenmächtig löschen.** Auch `delete_memories` folgt der `delete_memory`-Regel: nur auf explizite Anweisung Olivers. Der wöchentliche Wartungs-Task (Sonntag 19:00, scheduled task `task-1777530798342-smthgv`) identifiziert Kandidaten und legt sie zur Bestätigung vor — er führt selbst keine Löschungen oder Merges aus.
 
 ## Tagging-Protokoll vor jedem `add_memory`
 
@@ -130,6 +148,7 @@ Test: Suche „Kaffee" → 20 Treffer, alle ungeordnet. Kein Tag diskriminiert.
 
 - **`update_memory`**: `tags` überschreibt komplett (kein Merge). Wenn nur ein Tag ergänzt werden soll, vorher den Eintrag suchen, alte Tags + neuer Tag zusammenbauen, dann `update_memory` mit der vollständigen Liste.
 - **`delete_memory`**: nur auf explizite Anweisung Olivers. Nie eigenmächtig.
+- **`delete_memories`** (Bulk): identische Regel wie `delete_memory`. Nie eigenmächtig.
 
 ## Format-Konventionen für Inhalte
 
