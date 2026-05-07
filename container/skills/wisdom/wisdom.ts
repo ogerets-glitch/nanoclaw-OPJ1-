@@ -131,6 +131,44 @@ function blobToFloat32(blob: Uint8Array): Float32Array {
   return new Float32Array(buf);
 }
 
+interface ScoredChunk {
+  source_label: string;
+  chapter_num: number;
+  chapter_title: string;
+  verse_range: string;
+  text: string;
+  embedding: Float32Array;
+  score: number;
+}
+
+// Maximal Marginal Relevance: balances relevance to the query against
+// diversity within the result set. lambda=1.0 → pure top-K by relevance,
+// lambda=0.0 → pure diversity. 0.7 is the usual default.
+function mmrSelect(scored: ScoredChunk[], k: number, lambda = 0.7): ScoredChunk[] {
+  if (scored.length <= k) return scored.slice().sort((a, b) => b.score - a.score);
+  const remaining = scored.slice().sort((a, b) => b.score - a.score);
+  const selected: ScoredChunk[] = [remaining.shift()!];
+  while (selected.length < k && remaining.length > 0) {
+    let bestIdx = 0;
+    let bestMmr = -Infinity;
+    for (let i = 0; i < remaining.length; i++) {
+      const r = remaining[i];
+      let maxSimToSelected = -Infinity;
+      for (const s of selected) {
+        const sim = cosine(r.embedding, s.embedding);
+        if (sim > maxSimToSelected) maxSimToSelected = sim;
+      }
+      const mmr = lambda * r.score - (1 - lambda) * maxSimToSelected;
+      if (mmr > bestMmr) {
+        bestMmr = mmr;
+        bestIdx = i;
+      }
+    }
+    selected.push(remaining.splice(bestIdx, 1)[0]);
+  }
+  return selected;
+}
+
 async function search(query: string, k = 5): Promise<void> {
   let db = openDb();
   const count = (db.query("SELECT COUNT(*) AS c FROM chunks").get() as { c: number }).c;
@@ -143,7 +181,6 @@ async function search(query: string, k = 5): Promise<void> {
 
   const [queryEmb] = await embedBatch([query]);
   const rows = db.query("SELECT * FROM chunks").all() as Array<{
-    id: number;
     source_label: string;
     chapter_num: number;
     chapter_title: string;
@@ -152,13 +189,21 @@ async function search(query: string, k = 5): Promise<void> {
     embedding: Uint8Array;
   }>;
 
-  const scored = rows.map((r) => ({
-    ...r,
-    score: cosine(queryEmb, blobToFloat32(r.embedding)),
-  }));
-  scored.sort((a, b) => b.score - a.score);
+  const scored: ScoredChunk[] = rows.map((r) => {
+    const emb = blobToFloat32(r.embedding);
+    return {
+      source_label: r.source_label,
+      chapter_num: r.chapter_num,
+      chapter_title: r.chapter_title,
+      verse_range: r.verse_range,
+      text: r.text,
+      embedding: emb,
+      score: cosine(queryEmb, emb),
+    };
+  });
 
-  for (const r of scored.slice(0, k)) {
+  const selected = mmrSelect(scored, k, 0.7);
+  for (const r of selected) {
     console.log(`\n- ${r.source_label}, Kapitel ${r.chapter_num} (${r.chapter_title}), Verse ${r.verse_range}`);
     console.log(`  Score: ${r.score.toFixed(3)}`);
     const preview = r.text.length > 400 ? r.text.slice(0, 400) + "..." : r.text;

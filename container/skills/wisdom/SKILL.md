@@ -41,7 +41,9 @@ Pro Treffer:
   13. The quality of decision is like the well-timed swoop of a falcon...
 ```
 
-Niedrige Scores (< 0.45) sind in der Regel schwache Treffer und ein Hinweis darauf, dass die Frage nicht gut zum Korpus passt.
+Niedrige Scores (< 0.40) sind in der Regel schwache Treffer und ein Hinweis darauf, dass die Frage nicht gut zum Korpus passt. **Cross-lingual** (deutsche Frage → englischer Treffer) liegt typisch ~0.10–0.15 unter mono-lingual — Werte um 0.45–0.55 sind in dem Modus also schon brauchbar; bei englischer Frage erwartet man eher 0.55–0.70.
+
+Die Treffer-Auswahl nutzt **MMR** (Maximal Marginal Relevance, λ=0.7) statt purem Top-K — das verhindert, dass mehrere fast identische Verse aus demselben Kapitel die Liste fluten, und nutzt die fünf Plätze breiter.
 
 ## Wie der Output verwendet wird
 
