@@ -105,6 +105,17 @@ Pro Subquery: parallel mehrere Backends abfragen. Welche Backends verfügbar sin
 - Eine Web-Suche (native WebSearch, oder externes Backend wie Exa/Parallel/Brave falls verfügbar)
 - Ein Fetch-Tool für Volltext (WebFetch oder agent-browser)
 
+**Backend-Routing nach Domäne (aus Phase 0):**
+
+Die Domänen-Klassifikation entscheidet, welche zusätzlichen Backends in Phase 2 mitlaufen. Damit landet jede Subquery bei den Engines, die sie wahrscheinlich finden, ohne flächendeckend Token zu verbrennen.
+
+| Domäne | Standard-Backends | Zusätzlich (wenn verfügbar) |
+|---|---|---|
+| Wissenschaft / Technisches | WebSearch + Fetch | **SearxNG** mit Wissenschafts-Profil (siehe „SearxNG-Aufruf-Konvention" am Ende) |
+| Recht | WebSearch + Fetch | Rechtsrecherche-MCP (NeuRIS, EUR-Lex, GII) — falls die Frage in eine seiner Collections fällt |
+| Statistik | WebSearch + Fetch | Arbeitsmarkt-MCP (BA-Statistik, GENESIS, Regionalstatistik, Dashboard-Indikatoren) |
+| Tagesaktuelles / Kulturelles / Mixed | WebSearch + Fetch | Keine Spezial-Backends per Default |
+
 Wenn mehrere Suchquellen verfügbar sind: nutze sie *parallel* in einem Turn (mehrere Tool-Calls gleichzeitig), nicht sequenziell. Auch die Sprachvarianten parallel: deutsche und englische Suche im selben Turn.
 
 **Output dieser Phase ist eine strukturierte Treffertabelle**, kein Prosa:
@@ -140,6 +151,15 @@ Drei Schritte, in dieser Reihenfolge:
 Adversarial-Treffer kommen in eine separate Sektion der Treffertabelle. Auch Adversarial-Suchen ohne brauchbares Ergebnis werden ins Audit-Log geschrieben — die Information "wir haben gegengesucht und nichts gefunden" ist substantiell.
 
 **Schritt 3 — Lücken-Inventur.** Vergleiche die `erwartete_pflichtquellen` aus Phase 1 mit den tatsächlich gefundenen. Was fehlt? Wo sind blinde Flecken? Liste explizit auf — diese Liste fließt später in den Bericht.
+
+**Schritt 3a — Lücken-Schließer (gezielter Spezial-Engine-Aufruf).** Nach der Lücken-Inventur: Wenn eine erwartete Pflichtquelle einer spezifischen Quellgattung entspricht, die ein Spezial-Backend abdeckt, mache einen *gezielten* Folge-Aufruf — nicht eine erneute Broad Search. Beispiele:
+
+- Akademisch fehlt (peer-reviewed Studie, ArXiv-Paper, PubMed-Eintrag) → SearxNG-Aufruf nur mit den jeweils passenden Engines (`engines=arxiv,pubmed,crossref,semantic+scholar`), max 1 Call pro fehlender Quellgattung.
+- Code/Repository fehlt → SearxNG mit `engines=github,gitlab,codeberg`.
+- Forenwissen / community knowledge fehlt → SearxNG mit `engines=stackoverflow,askubuntu,superuser`.
+- Faktenbasis fehlt (Wikipedia/Wikidata) → SearxNG mit `engines=wikipedia,wikidata`.
+
+Diese gezielten Aufrufe zählen ins Tool-Call-Budget. Dokumentiere im Audit-Log: welche Lücke, welche Engines, welcher Suchstring, was kam zurück. Wenn auch der gezielte Aufruf null brauchbare Treffer liefert: das ist ein substantieller Befund für den Bericht („Lücke konnte auch mit Spezial-Suche nicht geschlossen werden — wahrscheinlich existiert das Material nicht").
 
 ## Phase 4 — Triage
 
@@ -264,3 +284,67 @@ Alle URLs, gruppiert nach Tier, mit Datum des Aufrufs.
 - Keine eigene Meinung zu kontroversen Themen. Positionen werden referiert, nicht bewertet — außer im methodischen Sinn (substantiell vs. schwach).
 - Keine Vollständigkeitsversprechen. Tiefenrecherche heißt: gründlich gesucht, ehrlich berichtet, nicht erschöpfend.
 - Keine mehrfachen Plan-Revisionen. Wenn ein zweiter Plan auch versagt, ist die Frage selbst zu prüfen — das ist Aufgabe des Users.
+
+## Backend-Aufruf-Konventionen
+
+### SearxNG (lokale Meta-Suchmaschine)
+
+SearxNG aggregiert ~25 spezialisierte Engines. Für Tiefensuche relevant: ArXiv, PubMed, Crossref, Semantic Scholar, Wikipedia, Wikidata, GitHub, Stackoverflow/AskUbuntu/Superuser, sowie Web-General (Brave, Mojeek, Qwant, DuckDuckGo).
+
+**Erreichbarkeit:**
+
+- Aus dem Host (z.B. Claude Code direkt): `http://127.0.0.1:8888/`
+- Aus einem NanoClaw-Container: `http://172.17.0.1:8888/`
+
+**JSON-API-Aufruf:**
+
+```bash
+curl -sS "http://172.17.0.1:8888/search?q=<urlencoded-query>&engines=<engine-list>&format=json"
+```
+
+Wichtige Parameter:
+
+- `q` — Suchterm, URL-encoded; Anführungszeichen für Phrasen erlaubt (`"exact phrase"`)
+- `engines` — Komma-getrennte Engine-Liste (kein Leerzeichen). Engine-Namen mit Leerzeichen (z.B. `semantic scholar`) als `semantic+scholar` schreiben. Ohne `engines`-Parameter werden alle aktiven Engines abgefragt — für Tiefensuche fast nie sinnvoll.
+- `format=json` — strukturierte Antwort statt HTML
+- Optional: `language=de` / `language=en` / `language=auto`, `time_range=year` (oder `month`, `week`, `day`)
+
+**Engine-Profile (Empfehlung pro Phase-2-Domäne):**
+
+| Profil | Engines |
+|---|---|
+| Wissenschaft | `arxiv,pubmed,crossref,semantic+scholar,google+scholar,openairepublications` |
+| Tech / Code | `github,gitlab,codeberg,stackoverflow,askubuntu,superuser` |
+| Faktenbasis | `wikipedia,wikidata` |
+| Web-General (privacy-freundlich) | `brave,mojeek,qwant,duckduckgo` |
+
+**Antwort-Struktur (JSON):**
+
+```json
+{
+  "query": "...",
+  "number_of_results": 0,
+  "results": [
+    {
+      "engine": "arxiv",
+      "title": "...",
+      "url": "...",
+      "content": "snippet",
+      "publishedDate": "..."
+    }
+  ],
+  "answers": [],
+  "infoboxes": [],
+  "suggestions": []
+}
+```
+
+`results[].engine` → ins Audit-Log; `results[].url` → Tier-Schätzung (T1 für ArXiv/PubMed/Crossref, T3 für Wikipedia, T4 für Stackoverflow/Foren); `results[].publishedDate` falls vorhanden in die Treffertabelle als `Datum`.
+
+**Limits und Etikette:**
+
+- 5 Sek Default-Timeout pro Engine; eine einzelne 403-Engine bricht den Gesamtaufruf nicht ab
+- Bei wiederholten 403/429 von einer Engine: SearxNG suspended sie automatisch für 180 s — kein Retry sinnvoll
+- Lieber gezielt 4-6 Engines als alle 25 — sonst wird die Antwort breit und langsam
+
+**Wenn SearxNG nicht antwortet:** Health-Check `curl -sS http://172.17.0.1:8888/healthz` (sollte `OK` liefern). Bei Ausfall: Phase 2 läuft mit den anderen Backends weiter, im Audit-Log notieren („SearxNG nicht erreichbar — fallback auf WebSearch only").
