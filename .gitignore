@@ -28,6 +28,11 @@ groups/*
 # Temp files
 .tmp-*
 
+# wisdom-skill build artifacts (raw texts re-fetchable from Public Domain,
+# parsed JSON is committed as chunks/ inside the skill itself)
+scripts/wisdom-build/raw/
+scripts/wisdom-build/parsed/
+
 # OS
 .DS_Store
 
