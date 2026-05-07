@@ -1,15 +1,19 @@
 ---
 name: wisdom
-description: Semantische Suche in alten Weisheits-Texten — findet thematisch passende Stellen zu einer Frage oder Lebenslage, auch wenn die genauen Worte nicht im Text stehen. Aktuell indiziert: Sun Tzu, "The Art of War" (Lionel Giles 1910, Public Domain). Triggert bei "/wisdom <frage>", "was sagt Sun Tzu zu …", "Sun-Tzu-Sicht auf …", oder allgemein wenn jemand strategischen / taktischen Rat aus klassischen Texten sucht. Cross-lingual via bge_multilingual_gemma2 — deutsche Anfrage findet englische Treffer.
+description: Semantische Suche in klassischen Weisheits-Texten — findet thematisch passende Stellen zu einer Frage oder Lebenslage, auch wenn die genauen Worte nicht im Text stehen. Aktuell indiziert (drei Korpora, ~540 Chunks): Sun Tzu "The Art of War" englisch (Giles 1910), Sun Tzu "Die Kunst des Krieges" deutsch (Clavell-Edition nach Giles), I Ging "Buch der Wandlungen" deutsch (Wilhelm 1923). Triggert bei "/wisdom <frage>", "was sagt Sun Tzu zu …", "was sagt das I Ging zu …", "Hexagramm zu …", "strategische / daoistische Sicht auf …" oder allgemein wenn jemand klassischen Rat sucht. Cross-lingual via bge_multilingual_gemma2.
 allowed-tools:
   - Bash(bun run /app/skills/wisdom/wisdom.ts:*)
 ---
 
-# wisdom — Strategische Weisheit semantisch durchsuchen
+# wisdom — Klassische Weisheit semantisch durchsuchen
 
 ## Was der Skill macht
 
-Findet Passagen aus klassischen Strategie-/Weisheits-Texten, die thematisch zu einer Frage passen — basierend auf Bedeutung, nicht auf Wortmatch. Beispiel: "Was tun wenn ich auf zwei Fronten gefordert werde?" findet Sun-Tzu-Passagen über Kessel-Situationen und Kräfteteilung, ohne dass diese Worte im Original vorkommen.
+Findet Passagen aus klassischen Strategie- und Weisheits-Texten, die thematisch zu einer Frage passen — basierend auf Bedeutung, nicht auf Wortmatch. Beispiele:
+
+- *„Was tun wenn ich auf zwei Fronten gefordert werde?"* → Sun-Tzu-Passagen über Kessel-Situationen und Kräfteteilung
+- *„Wie soll ich auf einen ungeduldigen Lehrling reagieren?"* → I-Ging-Hexagramm 4 (Mong, Die Jugendtorheit) — der Lehrer wartet, bis der Schüler ihn aufsucht
+- *„Was sagt das I Ging zu beharrlich-bleiben in unsicheren Zeiten?"* → mehrere passende Hexagramme mit Urteils- und Bild-Texten
 
 ## Wann triggern
 
@@ -51,13 +55,21 @@ Die Treffer sind **Originalstellen** mit Quelle. **Nicht einfach paraphrasieren*
 
 ## Umfang
 
-- 81 Chunks aus 13 Kapiteln des Sun Tzu (Giles 1910)
-- Embedding-Modell: `bge_multilingual_gemma2` (3584 Dimensionen, multilingual) via Infomaniak (Schweiz)
+Drei Korpora, ~540 Chunks total:
+
+| Korpus | Sprache | Chunks | Quelle |
+|---|---|---|---|
+| Sun Tzu — *The Art of War* | Englisch | 81 | Lionel Giles 1910 (Public Domain, Project Gutenberg #132) |
+| Sunzi — *Die Kunst des Krieges* | Deutsch | 98 | Clavell-Edition nach Giles (wrd.ch/triboni) |
+| I Ging — *Buch der Wandlungen* | Deutsch | 367 | Richard Wilhelm 1923 (Public Domain seit 2001, METIS-Ausgabe 2023) |
+
+I Ging ist pro Hexagramm in 3 oder mehr Chunks aufgeteilt: Zeichen + Urteil, Bild, Linien (in 1–3 Stücken). Sun Tzu ist pro Kapitel in 4–13 Vers-/Abschnitt-Gruppen aufgeteilt.
+
+- Embedding-Modell: `bge_multilingual_gemma2` (3584 Dimensionen, multilingual, Schweizer Hosting) via Infomaniak
 - Cache liegt unter `~/.cache/wisdom/wisdom.sqlite` (Container-lokal, geht bei Container-Stop verloren — wird beim nächsten Search-Aufruf neu gebaut)
 
 ## Bewusste Grenzen
 
-- **Aktuell nur Sun Tzu.** I-Ging als zweites Korpus geplant, sobald sauber gemeinfreie deutsche Wilhelm-Quelle verfügbar.
-- **Originaltext ist Englisch** (Giles 1910). Deutsche Anfragen funktionieren über das multilingual-Embedding, der Treffer-Text bleibt aber Englisch.
-- **Keine Interpretation durch den Skill.** Wertung und Übertragung auf die konkrete Lage ist Aufgabe des Users / des aufrufenden Agents.
-- **Cache pro Container.** Bei jedem neuen Container-Lifecycle einmalig 30 s Build-Zeit, ein paar Cent. Kein Drama, aber zu wissen.
+- **Keine Interpretation durch den Skill.** Wertung und Übertragung auf die konkrete Lage ist Aufgabe des Users / des aufrufenden Agents. Skill liefert nur den Originaltext mit Quelle.
+- **Cache pro Container.** Bei jedem neuen Container-Lifecycle einmalig ~60 s Build-Zeit, ein paar Cent über Infomaniak. Kein Drama, aber zu wissen.
+- **Cross-lingual ist nicht symmetrisch.** Eine deutsche Frage findet englische Sun-Tzu-Treffer mit ~0.10 Score-Penalty gegenüber dem deutschen Sun Tzu. Wenn beide Korpora hochkommen, bevorzuge in der Regel die deutsche Quelle für die Zitate.

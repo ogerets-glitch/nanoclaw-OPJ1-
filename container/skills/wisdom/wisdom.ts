@@ -59,7 +59,7 @@ function openDb(): Database {
 
 function loadCorpora(): Chunk[] {
   const all: Chunk[] = [];
-  for (const file of ["suntzu.json"]) {
+  for (const file of ["suntzu.json", "suntzu-de.json", "iging.json"]) {
     const path = join(CHUNKS_DIR, file);
     if (!existsSync(path)) continue;
     const arr = JSON.parse(readFileSync(path, "utf8")) as Chunk[];
