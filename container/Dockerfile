@@ -20,6 +20,7 @@ ARG INSTALL_CJK_FONTS=false
 # mean every rebuild silently picks up the latest and can break in lockstep
 # across all users.
 ARG CLAUDE_CODE_VERSION=2.1.128
+ARG CODEX_VERSION=0.124.0
 ARG AGENT_BROWSER_VERSION=latest
 ARG VERCEL_VERSION=52.2.1
 ARG OPENCODE_VERSION=1.4.17
@@ -135,6 +136,9 @@ RUN --mount=type=cache,target=/root/.cache/pnpm \
 
 RUN --mount=type=cache,target=/root/.cache/pnpm \
     pnpm install -g "opencode-ai@${OPENCODE_VERSION}"
+
+RUN --mount=type=cache,target=/root/.cache/pnpm \
+    pnpm install -g "@openai/codex@${CODEX_VERSION}"
 
 RUN --mount=type=cache,target=/root/.cache/pnpm \
     pnpm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
