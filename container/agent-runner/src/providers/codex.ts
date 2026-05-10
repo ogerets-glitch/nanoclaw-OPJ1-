@@ -105,7 +105,15 @@ export class CodexProvider implements AgentProvider {
   private readonly model: string;
 
   constructor(options: ProviderOptions = {}) {
-    this.mcpServers = options.mcpServers ?? {};
+    // Codex's app-server config.toml only supports stdio-based MCP servers.
+    // Remote/HTTP MCP variants from McpServerConfig are filtered out here.
+    const servers = options.mcpServers ?? {};
+    this.mcpServers = Object.fromEntries(
+      Object.entries(servers).filter(
+        (entry): entry is [string, { command: string; args: string[]; env: Record<string, string> }] =>
+          'command' in entry[1],
+      ),
+    );
     this.model = (options.env?.CODEX_MODEL as string | undefined) ?? 'gpt-5.4-mini';
   }
 
