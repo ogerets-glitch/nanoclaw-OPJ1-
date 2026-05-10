@@ -450,6 +450,15 @@ async function buildContainerArgs(
   }
   log.info('OneCLI gateway applied', { containerName });
 
+  // LOCAL PATCH (2026-05-11): NO_PROXY for local Voice/STT services on the host.
+  // OneCLI sets HTTP_PROXY/HTTPS_PROXY so credentialed API calls (Anthropic,
+  // OpenAI, etc.) get routed through the vault, but skills that talk to
+  // host-side services (TTS-OpenAI on 8385, Piper on 8386, Whisper STT on
+  // 8384) end up tunneled through OneCLI, which doesn't know what to do with
+  // them. NO_PROXY whitelists the host so direct connections work.
+  args.push('-e', 'NO_PROXY=host.docker.internal,127.0.0.1,localhost');
+  args.push('-e', 'no_proxy=host.docker.internal,127.0.0.1,localhost');
+
   // Per-agent-group env overrides — applied after OneCLI so they win.
   if (containerConfig.env) {
     for (const [key, value] of Object.entries(containerConfig.env)) {
