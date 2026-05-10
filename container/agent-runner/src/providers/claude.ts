@@ -1,10 +1,11 @@
 import fs from 'fs';
 import path from 'path';
 
-import { query as sdkQuery, type HookCallback, type PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
+import { query as sdkQuery, type HookCallback, type PreCompactHookInput, type SessionStartHookInput } from '@anthropic-ai/claude-agent-sdk';
 
 import { clearContainerToolInFlight, setContainerToolInFlight } from '../db/connection.js';
 import { registerProvider } from './provider-registry.js';
+import { redactSkillFulltexts, SESSION_START_COMPACT_DISCLAIMER } from './skill-redaction.js';
 import type { AgentProvider, AgentQuery, McpServerConfig, ProviderEvent, ProviderOptions, QueryInput } from './types.js';
 
 function log(msg: string): void {
@@ -198,6 +199,19 @@ function createPreCompactHook(assistantName?: string): HookCallback {
       return {};
     }
 
+    // LOCAL PATCH (2026-05-08): Shrink skill bodies in the transcript BEFORE
+    // compaction so the SDK rebuilds its invoked-skills list from markers and
+    // the post-compact reminder block stays small. Failures here must never
+    // block archiving — log and continue.
+    try {
+      const r = redactSkillFulltexts(transcriptPath);
+      if (r.redacted > 0) {
+        log(`PreCompact: redacted ${r.redacted}/${r.scanned} skill bodies, saved ${r.bytesSaved} bytes`);
+      }
+    } catch (err) {
+      log(`PreCompact: skill-fulltext redaction failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
     try {
       const content = fs.readFileSync(transcriptPath, 'utf-8');
       const messages = parseTranscript(content);
@@ -230,6 +244,25 @@ function createPreCompactHook(assistantName?: string): HookCallback {
     return {};
   };
 }
+
+// LOCAL PATCH (2026-05-08): SessionStart-Hook for source='compact' — injects a
+// disclaimer as additionalContext after every compaction so the model treats
+// the post-compact "skills invoked"-block as historical, even if the
+// PreCompact-redaction missed an edge case. See skill-redaction.ts for the
+// full rationale.
+const sessionStartHook: HookCallback = async (input) => {
+  const session = input as SessionStartHookInput;
+  if (session.source !== 'compact') {
+    return { continue: true };
+  }
+  return {
+    continue: true,
+    hookSpecificOutput: {
+      hookEventName: 'SessionStart',
+      additionalContext: SESSION_START_COMPACT_DISCLAIMER,
+    },
+  } as unknown as ReturnType<HookCallback>;
+};
 
 // ── Provider ──
 
@@ -303,6 +336,7 @@ export class ClaudeProvider implements AgentProvider {
           PostToolUse: [{ hooks: [postToolUseHook] }],
           PostToolUseFailure: [{ hooks: [postToolUseHook] }],
           PreCompact: [{ hooks: [createPreCompactHook(this.assistantName)] }],
+          SessionStart: [{ hooks: [sessionStartHook] }],
         },
       },
     });
