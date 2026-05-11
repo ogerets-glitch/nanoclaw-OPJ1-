@@ -436,7 +436,7 @@ function handleEvent(event: ProviderEvent, _routing: RoutingContext): void {
  * blocks, even with a single destination. Bare text is scratchpad only.
  */
 function dispatchResultText(text: string, routing: RoutingContext): void {
-  const MESSAGE_RE = /<message\s+to="([^"]+)"\s*>([\s\S]*?)<\/message>/g;
+  const MESSAGE_RE = /<message\s+[^>]*?\bto="([^"]+)"[^>]*>([\s\S]*?)<\/message>/g;
 
   let match: RegExpExecArray | null;
   let sent = 0;
