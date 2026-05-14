@@ -255,28 +255,3 @@ This project uses pnpm with `minimumReleaseAge: 4320` (3 days) in `pnpm-workspac
 
 The container buildkit caches the build context aggressively. `--no-cache` alone does NOT invalidate COPY steps — the builder's volume retains stale files. To force a truly clean rebuild, prune the builder then re-run `./container/build.sh`.
 
-## Git & Versionskontrolle
-
-Dieses Repo ist ein Fork: `origin` = Olivers Fork (ogerets-glitch/nanoclaw-OPJ1-), `upstream` = Original (qwibitai/nanoclaw).
-
-### Nach jeder Code-Änderung:
-```bash
-git add -A && git commit -m "beschreibung" && git push origin main
-```
-
-### Niemals committen:
-- `.mcp.json` (enthält API-Keys) — steht in .gitignore
-- `.env` (enthält Secrets)
-- `nanoclaw.pid` (temporär) — steht in .gitignore
-
-### Updates vom Original holen:
-```bash
-git fetch upstream && git merge upstream/main
-```
-**ACHTUNG:** Nach upstream-Updates prüfen, ob der Circuit Breaker in `dist/group-queue.js` noch vorhanden ist. Falls überschrieben: in `src/group-queue.ts` neu einbauen und `npm run build`.
-
-## Sync-History
-
-| Datum | Upstream-Version | Commits | Konflikte | Notizen |
-|-------|-----------------|---------|-----------|---------|
-| 2026-03-22 | v1.2.21 | 41 | 4 (index.ts, remote-control.test.ts, package-lock.json, badge.svg) | Alle Custom-Patches erhalten (Circuit Breaker, Voice, Image-Vision, PDF, Location, Office-Docs, Telegram). Neues: ESLint, Claw CLI, Slack-Formatting-Skill, Security-Fix. |
