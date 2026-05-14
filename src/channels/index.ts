@@ -8,5 +8,6 @@
 
 // cli — default channel that ships with main (always on, no credentials).
 import './cli.js';
-import './telegram.js';
-import './signal.js';
+// Telegram + Signal removed 2026-05-14 — OPJ1 cutover to SimpleX. Their
+// source files remain on disk for reference but are no longer imported.
+import './simplex.js';
