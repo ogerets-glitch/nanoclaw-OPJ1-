@@ -11,6 +11,9 @@
  * Outbound: `/_send @<contactId> text <chunk>` JSON-RPC commands, with
  *   chunked text for messages > SIMPLEX_CHUNK_MAX.
  */
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
 import { readEnvFile } from '../env.js';
 import { log } from '../log.js';
 import { registerChannelAdapter } from './channel-registry.js';
@@ -27,21 +30,38 @@ const PLATFORM_PREFIX = 'simplex:';
 // SimpleX protocol event-type strings — keep in one place so a daemon
 // schema bump only touches this block.
 const EVT_NEW_CHAT_ITEMS = 'newChatItems';
+const EVT_RCV_FILE_COMPLETE = 'rcvFileComplete';
 const EVT_CHAT_CMD_ERROR = 'chatCmdError';
 const CHAT_INFO_DIRECT = 'direct';
 const CHAT_DIR_RECEIVE = 'directRcv';
 const CONTENT_RECEIVED = 'rcvMsgContent';
 const MSG_TYPE_TEXT = 'text';
+const MSG_TYPE_VOICE = 'voice';
+
+// Voice-note constraints (mirrors Pi-Bridge defaults).
+const MAX_VOICE_BYTES = 25 * 1024 * 1024;
+const PENDING_VOICE_TTL_MS = 5 * 60 * 1000;
 
 interface SimplexAdapterConfig {
   wsUrl: string;
   allowedContactIds: Set<string>;
+  filesFolder: string;
+  sttUrl: string;
+  sttLanguage: string;
+  sttTimeoutMs: number;
 }
 
 interface PendingRpc {
   resolve: (value: unknown) => void;
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+}
+
+interface PendingVoice {
+  contactId: string;
+  senderName: string;
+  fileName: string;
+  ts: number;
 }
 
 function chunkText(text: string, limit: number): string[] {
@@ -58,11 +78,58 @@ function chunkText(text: string, limit: number): string[] {
   return chunks;
 }
 
+async function transcribeAudio(
+  filePath: string,
+  sttUrl: string,
+  language: string,
+  timeoutMs: number,
+): Promise<string | null> {
+  try {
+    const buf = await readFile(filePath);
+    const form = new FormData();
+    // Force a generic filename so the STT server's content-sniffing isn't
+    // confused by SimpleX's "voice_YYYYMMDD_HHMMSS.m4a" pattern.
+    form.append('file', new Blob([new Uint8Array(buf)], { type: 'audio/mp4' }), 'voice.m4a');
+    form.append('language', language);
+
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(sttUrl, { method: 'POST', body: form, signal: ctrl.signal });
+      if (!res.ok) {
+        log.warn('SimpleX STT: non-OK response', { status: res.status, sttUrl });
+        return null;
+      }
+      const json = (await res.json()) as { text?: string };
+      const text = (json.text ?? '').trim();
+      return text || null;
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (err) {
+    log.warn('SimpleX STT: call failed', { sttUrl, err });
+    return null;
+  }
+}
+
 function createSimplexAdapter(config: SimplexAdapterConfig): ChannelAdapter {
   let ws: WebSocket | null = null;
   let setup: ChannelSetup | null = null;
   let corrCounter = 0;
   const pending = new Map<string, PendingRpc>();
+  const pendingVoices = new Map<number, PendingVoice>();
+
+  function evictStaleVoices(): void {
+    const now = Date.now();
+    const stale: number[] = [];
+    for (const [fileId, p] of pendingVoices) {
+      if (now - p.ts > PENDING_VOICE_TTL_MS) stale.push(fileId);
+    }
+    for (const fileId of stale) {
+      pendingVoices.delete(fileId);
+      log.warn('SimpleX: evicting stale pending voice', { fileId });
+    }
+  }
 
   function isWsOpen(): boolean {
     return ws !== null && ws.readyState === WebSocket.OPEN;
@@ -88,46 +155,133 @@ function createSimplexAdapter(config: SimplexAdapterConfig): ChannelAdapter {
     });
   }
 
+  function emitInbound(contactId: string, senderName: string, itemId: string, text: string, ts: string): void {
+    const platformId = `${PLATFORM_PREFIX}${contactId}`;
+    const inbound: InboundMessage = {
+      id: itemId,
+      kind: 'chat',
+      content: {
+        text,
+        sender: contactId,
+        senderId: platformId,
+        senderName,
+      },
+      timestamp: ts,
+    };
+    void setup?.onInbound(platformId, null, inbound);
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function handleNewChatItem(item: any): void {
+    const chatInfo = item.chatInfo;
+    // Phase 1: DMs only. Group support can come later.
+    if (chatInfo?.type !== CHAT_INFO_DIRECT) return;
+    const contact = chatInfo.contact;
+    if (!contact) return;
+    const contactId = String(contact.contactId);
+    if (!config.allowedContactIds.has(contactId)) {
+      log.debug('SimpleX: dropping message from non-allowlisted contact', { contactId });
+      return;
+    }
+    const chatItem = item.chatItem;
+    // Skip our own sent messages (chatDir.type === 'directSnd').
+    if (chatItem?.chatDir?.type !== CHAT_DIR_RECEIVE) return;
+    const content = chatItem.content;
+    if (content?.type !== CONTENT_RECEIVED) return;
+    const msgContent = content.msgContent;
+    const senderName: string = contact.localDisplayName || contact.profile?.displayName || `contact-${contactId}`;
+    const itemId = String(chatItem.meta?.itemId ?? Date.now());
+    const itemTs = chatItem.meta?.itemTs || new Date().toISOString();
+
+    if (msgContent?.type === MSG_TYPE_TEXT) {
+      const text: string = msgContent.text || '';
+      if (!text.trim()) return;
+      emitInbound(contactId, senderName, itemId, text, itemTs);
+      log.info('SimpleX message received', {
+        platformId: `${PLATFORM_PREFIX}${contactId}`,
+        senderName,
+        len: text.length,
+      });
+      return;
+    }
+
+    if (msgContent?.type === MSG_TYPE_VOICE) {
+      const file = chatItem.file;
+      const fileId: number | undefined = file?.fileId;
+      const fileName: string | undefined = file?.fileName;
+      const fileSize: number = file?.fileSize ?? 0;
+      if (typeof fileId !== 'number' || !fileName) {
+        log.warn('SimpleX voice: missing fileId or fileName', { contactId });
+        return;
+      }
+      if (fileSize > MAX_VOICE_BYTES) {
+        log.warn('SimpleX voice: file too large, rejecting', { contactId, fileSize });
+        emitInbound(contactId, senderName, itemId, '[Voice abgelehnt: Datei zu groß]', itemTs);
+        return;
+      }
+      evictStaleVoices();
+      pendingVoices.set(fileId, { contactId, senderName, fileName, ts: Date.now() });
+      // Auto-accept the file so XFTP starts downloading. Fire-and-forget — if
+      // /fr fails we'll see it in logs and the rcvFileComplete will never
+      // arrive, which TTL-eviction cleans up after 5 min.
+      rpc(`/fr ${fileId}`).catch((err) => {
+        log.warn('SimpleX voice: auto-accept (/fr) failed', { fileId, err });
+        pendingVoices.delete(fileId);
+      });
+      log.info('SimpleX voice received', {
+        platformId: `${PLATFORM_PREFIX}${contactId}`,
+        senderName,
+        fileId,
+        fileName,
+        fileSize,
+      });
+      return;
+    }
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async function handleVoiceComplete(resp: any): Promise<void> {
+    // SimpleX nests payload as resp.chatItem.chatItem.file (not single-level
+    // like newChatItems). See Pi-Bridge bridge.py:321-329 for the same dance.
+    const fileInfo = resp?.chatItem?.chatItem?.file;
+    const fileId: number | undefined = fileInfo?.fileId;
+    if (typeof fileId !== 'number') return;
+    evictStaleVoices();
+    const pendingVoice = pendingVoices.get(fileId);
+    if (!pendingVoice) {
+      // No matching pending voice — either from a non-allowlisted sender
+      // (allowlist guard via Map membership) or already processed.
+      log.debug('SimpleX: rcvFileComplete for unknown fileId', { fileId });
+      return;
+    }
+    pendingVoices.delete(fileId);
+    // Prefer the server-provided file path when available; fall back to
+    // joining with the configured files folder.
+    const relPath: string | undefined = fileInfo?.fileSource?.filePath;
+    const filePath = relPath ? join(config.filesFolder, relPath) : join(config.filesFolder, pendingVoice.fileName);
+    const transcript = await transcribeAudio(filePath, config.sttUrl, config.sttLanguage, config.sttTimeoutMs);
+    const text = transcript ? `[Voice] ${transcript}` : '[Voice konnte nicht transkribiert werden]';
+    emitInbound(pendingVoice.contactId, pendingVoice.senderName, `voice-${fileId}`, text, new Date().toISOString());
+    log.info('SimpleX voice transcribed', {
+      platformId: `${PLATFORM_PREFIX}${pendingVoice.contactId}`,
+      fileId,
+      ok: transcript !== null,
+      len: transcript?.length ?? 0,
+    });
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function handleEvent(data: any): void {
     const resp = data.resp;
-    if (!resp || resp.type !== EVT_NEW_CHAT_ITEMS) return;
-    const items = resp.chatItems || [];
-    for (const item of items) {
-      const chatInfo = item.chatInfo;
-      // Phase 1: DMs only. Group support can come later.
-      if (chatInfo?.type !== CHAT_INFO_DIRECT) continue;
-      const contact = chatInfo.contact;
-      if (!contact) continue;
-      const contactId = String(contact.contactId);
-      if (!config.allowedContactIds.has(contactId)) {
-        log.debug('SimpleX: dropping message from non-allowlisted contact', { contactId });
-        continue;
-      }
-      const chatItem = item.chatItem;
-      // Skip our own sent messages (chatDir.type === 'directSnd').
-      if (chatItem?.chatDir?.type !== CHAT_DIR_RECEIVE) continue;
-      const content = chatItem.content;
-      if (content?.type !== CONTENT_RECEIVED) continue;
-      const msgContent = content.msgContent;
-      if (msgContent?.type !== MSG_TYPE_TEXT) continue;
-      const text: string = msgContent.text || '';
-      if (!text.trim()) continue;
-      const platformId = `${PLATFORM_PREFIX}${contactId}`;
-      const senderName: string = contact.localDisplayName || contact.profile?.displayName || `contact-${contactId}`;
-      const inbound: InboundMessage = {
-        id: String(chatItem.meta?.itemId ?? Date.now()),
-        kind: 'chat',
-        content: {
-          text,
-          sender: contactId,
-          senderId: platformId,
-          senderName,
-        },
-        timestamp: chatItem.meta?.itemTs || new Date().toISOString(),
-      };
-      void setup?.onInbound(platformId, null, inbound);
-      log.info('SimpleX message received', { platformId, senderName, len: text.length });
+    if (!resp) return;
+    if (resp.type === EVT_NEW_CHAT_ITEMS) {
+      const items = resp.chatItems || [];
+      for (const item of items) handleNewChatItem(item);
+      return;
+    }
+    if (resp.type === EVT_RCV_FILE_COMPLETE) {
+      void handleVoiceComplete(resp);
+      return;
     }
   }
 
@@ -280,10 +434,22 @@ function createSimplexAdapter(config: SimplexAdapterConfig): ChannelAdapter {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_WS_URL = 'ws://127.0.0.1:5226';
+const DEFAULT_FILES_FOLDER = '/home/opj1claw/.simplex/files';
+const DEFAULT_STT_URL = 'http://127.0.0.1:8384/transcribe';
+const DEFAULT_STT_LANGUAGE = 'de';
+const DEFAULT_STT_TIMEOUT_MS = 30_000;
 
 registerChannelAdapter('simplex', {
   factory: () => {
-    const envVars = readEnvFile(['SIMPLEX_WS_URL', 'SIMPLEX_ALLOWED_CONTACT_IDS']);
+    const envVars = readEnvFile([
+      'SIMPLEX_WS_URL',
+      'SIMPLEX_ALLOWED_CONTACT_IDS',
+      'SIMPLEX_FILES_FOLDER',
+      'SIMPLEX_VOICE_STT_URL',
+      'SIMPLEX_VOICE_STT_LANGUAGE',
+      'SIMPLEX_VOICE_STT_TIMEOUT_MS',
+      'WHISPER_URL',
+    ]);
     const wsUrl = process.env.SIMPLEX_WS_URL || envVars.SIMPLEX_WS_URL || DEFAULT_WS_URL;
     const allowedRaw = process.env.SIMPLEX_ALLOWED_CONTACT_IDS || envVars.SIMPLEX_ALLOWED_CONTACT_IDS || '';
     const allowedContactIds = new Set(
@@ -296,6 +462,28 @@ registerChannelAdapter('simplex', {
       log.debug('SimpleX: SIMPLEX_ALLOWED_CONTACT_IDS not set, skipping channel');
       return null;
     }
-    return createSimplexAdapter({ wsUrl, allowedContactIds });
+    const filesFolder = process.env.SIMPLEX_FILES_FOLDER || envVars.SIMPLEX_FILES_FOLDER || DEFAULT_FILES_FOLDER;
+    const sttUrl =
+      process.env.SIMPLEX_VOICE_STT_URL ||
+      envVars.SIMPLEX_VOICE_STT_URL ||
+      process.env.WHISPER_URL ||
+      envVars.WHISPER_URL ||
+      DEFAULT_STT_URL;
+    const sttLanguage =
+      process.env.SIMPLEX_VOICE_STT_LANGUAGE || envVars.SIMPLEX_VOICE_STT_LANGUAGE || DEFAULT_STT_LANGUAGE;
+    const sttTimeoutMs = parseInt(
+      process.env.SIMPLEX_VOICE_STT_TIMEOUT_MS ||
+        envVars.SIMPLEX_VOICE_STT_TIMEOUT_MS ||
+        String(DEFAULT_STT_TIMEOUT_MS),
+      10,
+    );
+    return createSimplexAdapter({
+      wsUrl,
+      allowedContactIds,
+      filesFolder,
+      sttUrl,
+      sttLanguage,
+      sttTimeoutMs,
+    });
   },
 });
