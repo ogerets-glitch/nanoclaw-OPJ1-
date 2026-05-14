@@ -11,13 +11,13 @@
  * Outbound: `/_send @<contactId> text <chunk>` JSON-RPC commands, with
  *   chunked text for messages > SIMPLEX_CHUNK_MAX.
  */
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readFile, writeFile, unlink } from 'node:fs/promises';
+import { extname, join } from 'node:path';
 
 import { readEnvFile } from '../env.js';
 import { log } from '../log.js';
 import { registerChannelAdapter } from './channel-registry.js';
-import type { ChannelAdapter, ChannelSetup, InboundMessage, OutboundMessage } from './adapter.js';
+import type { ChannelAdapter, ChannelSetup, InboundMessage, OutboundFile, OutboundMessage } from './adapter.js';
 
 const SIMPLEX_CHUNK_MAX = 2000;
 // 200ms inter-chunk pacing: the local daemon accepts bursts, but chunks
@@ -112,12 +112,23 @@ async function transcribeAudio(
   }
 }
 
+function escapeSimplexName(name: string): string {
+  // `/file 'NAME' /path` needs single-quote-escaping for names with apostrophes.
+  // Standard sh-style: close-quote, backslash-quote, re-open-quote.
+  return name.replace(/'/g, "'\\''");
+}
+
 function createSimplexAdapter(config: SimplexAdapterConfig): ChannelAdapter {
   let ws: WebSocket | null = null;
   let setup: ChannelSetup | null = null;
   let corrCounter = 0;
   const pending = new Map<string, PendingRpc>();
   const pendingVoices = new Map<number, PendingVoice>();
+  // contactId → localDisplayName lookup. SimpleX `/file` and `/voice` slash
+  // commands target contacts by *display name*, not numeric id — but our
+  // platform_id-based routing only carries the id. Populate from every
+  // newChatItems event so the cache is warm by the time we want to reply.
+  const contactNames = new Map<string, string>();
 
   function evictStaleVoices(): void {
     const now = Date.now();
@@ -190,6 +201,8 @@ function createSimplexAdapter(config: SimplexAdapterConfig): ChannelAdapter {
     if (content?.type !== CONTENT_RECEIVED) return;
     const msgContent = content.msgContent;
     const senderName: string = contact.localDisplayName || contact.profile?.displayName || `contact-${contactId}`;
+    // Cache for outbound /file routing — keep fresh on every inbound.
+    contactNames.set(contactId, senderName);
     const itemId = String(chatItem.meta?.itemId ?? Date.now());
     const itemTs = chatItem.meta?.itemTs || new Date().toISOString();
 
@@ -386,6 +399,57 @@ function createSimplexAdapter(config: SimplexAdapterConfig): ChannelAdapter {
     }
   }
 
+  async function getContactName(contactId: string): Promise<string | null> {
+    const cached = contactNames.get(contactId);
+    if (cached) return cached;
+    // Fallback: ask the daemon. /contacts returns the full roster.
+    try {
+      const resp = (await rpc('/contacts')) as { contacts?: Array<{ contactId?: number; localDisplayName?: string }> };
+      const idNum = Number(contactId);
+      for (const c of resp.contacts ?? []) {
+        if (c.contactId === idNum && c.localDisplayName) {
+          contactNames.set(contactId, c.localDisplayName);
+          return c.localDisplayName;
+        }
+      }
+    } catch (err) {
+      log.warn('SimpleX getContactName: /contacts lookup failed', { contactId, err });
+    }
+    return null;
+  }
+
+  async function persistOutboundFile(file: OutboundFile): Promise<string> {
+    const ext = extname(file.filename || '') || '.bin';
+    const safeExt = ext.replace(/[^a-zA-Z0-9.]/g, '');
+    const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const path = join(config.filesFolder, `opj1-out-${stamp}${safeExt}`);
+    await writeFile(path, file.data);
+    return path;
+  }
+
+  async function sendFile(contactId: string, filePath: string): Promise<void> {
+    const name = await getContactName(contactId);
+    if (!name) {
+      log.warn('SimpleX sendFile: no contact name resolved, skipping', { contactId });
+      return;
+    }
+    const cmd = `/file '${escapeSimplexName(name)}' ${filePath}`;
+    try {
+      await rpc(cmd, 30_000);
+      log.info('SimpleX file sent', { contactId, path: filePath });
+    } catch (err) {
+      log.error('SimpleX sendFile failed', { contactId, path: filePath, err });
+    }
+  }
+
+  async function safeUnlink(path: string): Promise<void> {
+    try {
+      await unlink(path);
+    } catch {
+      /* best-effort */
+    }
+  }
+
   const adapter: ChannelAdapter = {
     name: 'simplex',
     channelType: 'simplex',
@@ -421,7 +485,20 @@ function createSimplexAdapter(config: SimplexAdapterConfig): ChannelAdapter {
       } else if (content && typeof content === 'object' && typeof content.text === 'string') {
         text = content.text;
       }
+      // Send text first so a caption lands above its attachment in chat.
       if (text) await sendText(contactId, text);
+
+      // Then any attached files. SimpleX-CLI has no way to force a "voice"
+      // msgContent — every file becomes a download card in the recipient's
+      // app (tap → download → play). Audio still works, just one extra tap.
+      for (const file of message.files ?? []) {
+        const persisted = await persistOutboundFile(file);
+        try {
+          await sendFile(contactId, persisted);
+        } finally {
+          await safeUnlink(persisted);
+        }
+      }
       return undefined;
     },
   };
