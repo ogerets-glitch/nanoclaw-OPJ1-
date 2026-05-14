@@ -3,6 +3,12 @@ import path from 'path';
 
 import { query as sdkQuery, type HookCallback, type PreCompactHookInput, type SessionStartHookInput } from '@anthropic-ai/claude-agent-sdk';
 
+// Regex shared by Pre/Post hooks to flag URLs that look like image files
+// based on their path/query. The PostToolUse sanitizer is the real safety
+// net (it inspects bytes/types), but blocking the call up front gives the
+// agent a clear instructional error so it switches to search_images.
+const IMAGE_URL_RE = /\.(jpe?g|png|gif|webp|bmp|tiff?|avif|heic|svg)(\?|#|$)/i;
+
 import { clearContainerToolInFlight, setContainerToolInFlight } from '../db/connection.js';
 import { registerProvider } from './provider-registry.js';
 import { redactSkillFulltexts, SESSION_START_COMPACT_DISCLAIMER } from './skill-redaction.js';
@@ -167,6 +173,21 @@ const preToolUseHook: HookCallback = async (input) => {
       stopReason: `Tool '${toolName}' is not available in this environment — use the nanoclaw equivalent.`,
     } as unknown as ReturnType<HookCallback>;
   }
+  // Image-loop guard: WebFetch returns image-content-blocks for image URLs,
+  // and a single broken image poisons the history with permanent HTTP 400s
+  // ("Could not process image"). Block image-extension URLs up front so the
+  // agent reroutes via mcp__nanoclaw__search_images + download_image + send_file.
+  if (toolName === 'WebFetch') {
+    const url = typeof i.tool_input?.url === 'string' ? (i.tool_input.url as string) : '';
+    if (url && IMAGE_URL_RE.test(url)) {
+      log(`PreToolUse: blocked WebFetch on image URL ${url}`);
+      return {
+        decision: 'block',
+        stopReason:
+          'WebFetch loads images as content-blocks into the conversation history. A broken image bricks the session with permanent HTTP 400 errors. Use mcp__nanoclaw__search_images to find images, mcp__nanoclaw__download_image to fetch them to /workspace/agent/.image-cache/, then mcp__nanoclaw__send_file to deliver them to the user.',
+      } as unknown as ReturnType<HookCallback>;
+    }
+  }
   // Bash exposes its timeout via the tool_input.timeout field (ms). Any other
   // tool: no declared timeout.
   const declaredTimeoutMs =
@@ -179,12 +200,85 @@ const preToolUseHook: HookCallback = async (input) => {
   return { continue: true };
 };
 
-/** Clear in-flight tool on PostToolUse / PostToolUseFailure. */
-const postToolUseHook: HookCallback = async () => {
+/**
+ * Detects any image-content-block in a tool response payload, no matter how
+ * deeply it's wrapped. We don't trust the URL filter alone: redirects, CDN
+ * proxies, and `data:image/...` URIs can deliver image bytes through URLs
+ * that don't have an image extension.
+ */
+function containsImageBlock(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(containsImageBlock);
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    if (obj.type === 'image') return true;
+    return Object.values(obj).some(containsImageBlock);
+  }
+  return false;
+}
+
+/**
+ * Clear in-flight tool on PostToolUse / PostToolUseFailure. Also acts as
+ * the second line of defence against image-content-block injection: if a
+ * tool result contains any image block (e.g. WebFetch slipped past the
+ * URL regex), replace the output with a text marker so the bytes never
+ * enter the conversation history.
+ */
+const postToolUseHook: HookCallback = async (input) => {
   try {
     clearContainerToolInFlight();
   } catch (err) {
     log(`PostToolUse: failed to clear container_state: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  const i = input as { tool_name?: string; tool_response?: unknown };
+  const toolName = i.tool_name ?? '';
+  // Only walk the response for tools that can plausibly emit image blocks.
+  // Bash/Read/Edit/Glob/Grep/Todo* return text or JSON and would just
+  // burn cycles on every call otherwise.
+  const isImageRiskyTool =
+    toolName === 'WebFetch' || toolName === 'WebSearch' || toolName.startsWith('mcp__');
+  if (isImageRiskyTool && i.tool_response !== undefined && containsImageBlock(i.tool_response)) {
+    log(`PostToolUse: stripped image content from ${toolName} response`);
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PostToolUse',
+        updatedToolOutput: {
+          content: [
+            {
+              type: 'text',
+              text: `Image content stripped by nanoclaw to prevent invalid-image API loops. Use mcp__nanoclaw__search_images + mcp__nanoclaw__download_image + mcp__nanoclaw__send_file to deliver images to the user — those bytes never enter the conversation history.`,
+            },
+          ],
+        },
+      },
+    } as unknown as ReturnType<HookCallback>;
+  }
+
+  return { continue: true };
+};
+
+/**
+ * On SessionEnd, wipe the per-agent image cache so we don't leak disk
+ * space across sessions. The directory lives under /workspace/agent (the
+ * group's persistent volume), so without explicit cleanup it would grow
+ * unbounded.
+ */
+const sessionEndHook: HookCallback = async () => {
+  const cacheDir = '/workspace/agent/.image-cache';
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(cacheDir);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { continue: true };
+    log(`SessionEnd: image-cache readdir failed: ${err instanceof Error ? err.message : String(err)}`);
+    return { continue: true };
+  }
+  for (const entry of entries) {
+    try {
+      fs.rmSync(path.join(cacheDir, entry), { recursive: true, force: true });
+    } catch {
+      /* best-effort */
+    }
   }
   return { continue: true };
 };
@@ -344,6 +438,7 @@ export class ClaudeProvider implements AgentProvider {
           PostToolUseFailure: [{ hooks: [postToolUseHook] }],
           PreCompact: [{ hooks: [createPreCompactHook(this.assistantName)] }],
           SessionStart: [{ hooks: [sessionStartHook] }],
+          SessionEnd: [{ hooks: [sessionEndHook] }],
         },
       },
     });
