@@ -206,4 +206,36 @@ describe('download_image', () => {
     expect(result.isError).toBe(true);
     expect(fetchCalls).toHaveLength(0);
   });
+
+  it('rejects private/loopback hosts without making a request (SSRF guard)', async () => {
+    const blockedUrls = [
+      'http://127.0.0.1/img.jpg',
+      'http://localhost:8080/img.jpg',
+      'http://172.17.0.1:9222/img.jpg', // Docker bridge → host CDP
+      'http://10.0.0.5/img.jpg',
+      'http://192.168.1.1/img.jpg',
+      'http://169.254.169.254/img.jpg', // cloud metadata
+      'file:///etc/passwd',
+      'gopher://example.com/_GET',
+    ];
+    for (const url of blockedUrls) {
+      const result = await downloadImage.handler({ url });
+      expect(result.isError).toBe(true);
+      expect(fetchCalls).toHaveLength(0);
+      fetchCalls = [];
+    }
+  });
+
+  it('blocks redirects to private hosts mid-stream', async () => {
+    nextResponse = ({ url }) => {
+      if (url.includes('attacker.com')) {
+        return new Response('', { status: 302, headers: { location: 'http://172.17.0.1:10255/admin' } });
+      }
+      return new Response('', { status: 200 });
+    };
+    const result = await downloadImage.handler({ url: 'https://attacker.com/looks-public.jpg' });
+    expect(result.isError).toBe(true);
+    expect((result.content[0] as { text: string }).text).toContain('Redirect to disallowed host');
+    expect(fetchCalls).toHaveLength(1); // hop 0 only — redirect target was blocked, never fetched
+  });
 });

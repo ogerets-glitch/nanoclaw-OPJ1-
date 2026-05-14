@@ -32,6 +32,58 @@ function log(msg: string): void {
   console.error(`[mcp-tools] ${msg}`);
 }
 
+// Returns a reason string if the URL targets a private/loopback host or
+// non-http(s) scheme, null otherwise. Used at the download_image entry
+// and after each manual redirect.
+function blockedHost(url: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return 'Invalid URL.';
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return 'Only http(s) URLs allowed.';
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (
+    host === 'localhost' ||
+    host === '0.0.0.0' ||
+    /^127\./.test(host) ||
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^169\.254\./.test(host) ||
+    /^172\.(1[6-9]|2[0-9]|3[01])\./.test(host) ||
+    host === '::1' ||
+    host.startsWith('fe80:') ||
+    host.startsWith('fc00:') ||
+    host.startsWith('fd')
+  ) {
+    return `Private/loopback host not allowed: ${parsed.hostname}`;
+  }
+  return null;
+}
+
+// Fetch that follows redirects manually, re-validating every hop against
+// blockedHost(). Caps at 5 hops, same as the Node default.
+async function fetchFollowingPublicRedirects(url: string): Promise<Response> {
+  let current = url;
+  for (let hop = 0; hop < 5; hop++) {
+    const res = await fetch(current, {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      redirect: 'manual',
+    });
+    if (res.status < 300 || res.status >= 400) return res;
+    const location = res.headers.get('location');
+    if (!location) return res;
+    const next = new URL(location, current).toString();
+    const blocked = blockedHost(next);
+    if (blocked) throw new Error(`Redirect to disallowed host blocked: ${blocked}`);
+    current = next;
+  }
+  throw new Error('Too many redirects (>5)');
+}
+
 // Opportunistic sweep: drops cache entries older than CACHE_TTL_MS. Cheap
 // and rate-limited; only protects against the crash/SIGKILL case where the
 // SessionEnd hook never fires.
@@ -214,9 +266,17 @@ export const downloadImage: McpToolDefinition = {
     const url = (args.url as string | undefined)?.trim();
     if (!url) return err('url is required');
 
+    // SSRF guard: only public http(s) URLs. Reject loopback / RFC1918 /
+    // link-local / host-gateway so a hallucinated or prompt-injected URL
+    // can't pivot into internal services (OneCLI gateway 10255, Browser
+    // CDP on 172.17.0.1:9222, etc.). Redirects are followed manually so
+    // a public URL can't 3xx-pivot to a private one mid-request.
+    const blockReason = blockedHost(url);
+    if (blockReason) return err(blockReason);
+
     let res: Response;
     try {
-      res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), redirect: 'follow' });
+      res = await fetchFollowingPublicRedirects(url);
     } catch (e) {
       log(`download_image: fetch failed for ${url}: ${e instanceof Error ? e.message : String(e)}`);
       return err(`Download failed: ${e instanceof Error ? e.message : 'unknown error'}`);
