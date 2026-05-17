@@ -11,3 +11,6 @@ import './cli.js';
 // Telegram + Signal removed 2026-05-14 — OPJ1 cutover to SimpleX. Their
 // source files remain on disk for reference but are no longer imported.
 import './simplex.js';
+// Delta-Chat added 2026-05-17 — replaces SimpleX as the primary OPJ1 channel.
+// SimpleX adapter stays imported but no-ops when its allowlist is empty.
+import './deltachat.js';
