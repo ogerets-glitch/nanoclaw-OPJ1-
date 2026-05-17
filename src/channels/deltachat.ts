@@ -67,6 +67,21 @@ interface DeltachatAdapterConfig {
   sttUrl: string;
   sttLanguage: string;
   sttTimeoutMs: number;
+  /**
+   * Optional path the agent container will see for inbound attachments.
+   * When set, the adapter rewrites every host-side `attachmentsInDir` prefix
+   * to this prefix before handing the path to the agent — so the agent reads
+   * files via the container-mount path instead of an unreachable host path.
+   * Leave undefined when the agent process runs on the host directly.
+   */
+  agentAttachmentsPath: string | null;
+}
+
+/** Map a host attachment path to the path the container agent sees. */
+export function toAgentPath(hostPath: string, hostPrefix: string, agentPrefix: string | null): string {
+  if (!agentPrefix) return hostPath;
+  if (!hostPath.startsWith(hostPrefix)) return hostPath;
+  return agentPrefix + hostPath.slice(hostPrefix.length);
 }
 
 export function chunkText(text: string, limit: number): string[] {
@@ -353,15 +368,19 @@ function createDeltachatAdapter(config: DeltachatAdapterConfig): ChannelAdapter 
       const hint = isImage
         ? 'Wenn dein Modell Vision unterstuetzt: Bitte das Bild direkt anschauen. Sonst: Tool nutzen, das den Pfad lesen kann.'
         : toolHintForMime(msg.fileMime);
+      // Container agents see the file under the mounted path, not the host
+      // path. The agent-side prompt must use the container path or `ls`
+      // gives ENOENT.
+      const agentPath = toAgentPath(copied.path, config.attachmentsInDir, config.agentAttachmentsPath);
       const composed = text
         ? `${text}\n\n[Anhang: ${typeLabel} '${copied.name}' (Typ ${
             msg.fileMime ?? 'unbekannt'
-          }) liegt unter:\n  ${copied.path}\n${hint}]`
+          }) liegt unter:\n  ${agentPath}\n${hint}]`
         : `[Anhang: ${typeLabel} '${copied.name}' (Typ ${msg.fileMime ?? 'unbekannt'}) liegt unter:\n  ${
-            copied.path
+            agentPath
           }\n${hint}]\n\nBitte beschreibe oder fasse zusammen, was du siehst.`;
       emitInbound(fromId, senderName, itemId, composed, ts, {
-        attachmentPath: copied.path,
+        attachmentPath: agentPath,
         attachmentName: copied.name,
         attachmentMime: msg.fileMime,
         attachmentViewType: msg.viewType,
@@ -665,6 +684,13 @@ registerChannelAdapter('deltachat', {
         String(DEFAULT_STT_TIMEOUT_MS),
       10,
     );
+    // When the agent runs in a container (the default for NanoClaw),
+    // the host attachments dir is mounted under containerConfig.mounts.
+    // The default matches the `containerPath` on the mount declaration below.
+    const agentAttachmentsPath =
+      process.env.DELTACHAT_AGENT_ATTACHMENTS_PATH ||
+      envVars.DELTACHAT_AGENT_ATTACHMENTS_PATH ||
+      '/workspace/extra/deltachat-attachments';
     return createDeltachatAdapter({
       rpcServerPath,
       accountsDir,
@@ -674,6 +700,7 @@ registerChannelAdapter('deltachat', {
       sttUrl,
       sttLanguage,
       sttTimeoutMs,
+      agentAttachmentsPath: agentAttachmentsPath || null,
     });
   },
   // Container-runner does not yet honor channel-level mounts (only provider
@@ -686,7 +713,11 @@ registerChannelAdapter('deltachat', {
     mounts: [
       {
         hostPath: `${process.env.HOME ?? '/home/opj1claw'}/.deltachat-data/attachments-in`,
-        containerPath: '/attachments-in',
+        // NanoClaw's container-runner mounts additionalMounts under
+        // `/workspace/extra/<containerPath>` — keep this in sync with the
+        // default of DELTACHAT_AGENT_ATTACHMENTS_PATH so the path the
+        // adapter writes into the prompt actually resolves on disk.
+        containerPath: 'deltachat-attachments',
         readonly: true,
       },
     ],

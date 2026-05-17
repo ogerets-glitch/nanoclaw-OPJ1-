@@ -9,7 +9,7 @@
  */
 import { describe, it, expect } from 'vitest';
 
-import { chunkText, sanitizeFilename, toolHintForMime, viewtypeForOutbound } from './deltachat.js';
+import { chunkText, sanitizeFilename, toAgentPath, toolHintForMime, viewtypeForOutbound } from './deltachat.js';
 
 describe('chunkText', () => {
   it('returns the input unchanged when below the limit', () => {
@@ -107,6 +107,27 @@ describe('viewtypeForOutbound', () => {
     expect(viewtypeForOutbound('report.pdf', 200_000)).toBe('File');
     expect(viewtypeForOutbound('data.csv', 1000)).toBe('File');
     expect(viewtypeForOutbound('noextension', 1000)).toBe('File');
+  });
+});
+
+describe('toAgentPath', () => {
+  it('rewrites the host prefix to the agent prefix', () => {
+    const out = toAgentPath(
+      '/home/opj1claw/.deltachat-data/attachments-in/oliver-11/26-abc/photo.jpg',
+      '/home/opj1claw/.deltachat-data/attachments-in',
+      '/workspace/extra/deltachat-attachments',
+    );
+    expect(out).toBe('/workspace/extra/deltachat-attachments/oliver-11/26-abc/photo.jpg');
+  });
+
+  it('returns host path unchanged when agent prefix is null', () => {
+    const out = toAgentPath('/some/path/foo.bin', '/some/path', null);
+    expect(out).toBe('/some/path/foo.bin');
+  });
+
+  it('returns host path unchanged when it does not start with host prefix', () => {
+    const out = toAgentPath('/other/path/foo.bin', '/some/path', '/mapped');
+    expect(out).toBe('/other/path/foo.bin');
   });
 });
 
