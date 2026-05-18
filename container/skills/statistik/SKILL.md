@@ -135,9 +135,8 @@ Jede Antwort muss enthalten: Quelle, Tabellencode oder Endpunkt, Stand (Datum). 
 Branchenspezifische Krankenstandsdaten stammen von den gesetzlichen Krankenkassen, nicht von Destatis oder der BA. Weder BAuA noch GBE-Bund haben eine offene API.
 
 Fallback-Strategie:
-1. Rechtsrecherche-MCP: `rag_search` mit `collection: "collection_c"` — dort sind SUGA-Berichte indexiert (wenn vorhanden)
-2. Web-Suche: "BAuA SUGA [aktuelles Jahr] Arbeitsunfähigkeit Wirtschaftszweig"
-3. Referenzformat: "Quelle: BMAS/BAuA (Jahr): Sicherheit und Gesundheit bei der Arbeit — Berichtsjahr [Jahr]. Download von www.baua.de/suga"
+1. Web-Suche: "BAuA SUGA [aktuelles Jahr] Arbeitsunfähigkeit Wirtschaftszweig"
+2. Referenzformat: "Quelle: BMAS/BAuA (Jahr): Sicherheit und Gesundheit bei der Arbeit — Berichtsjahr [Jahr]. Download von www.baua.de/suga"
 
 Schlüsselzahl für MAV-Argumentation: "Öffentliche und sonstige Dienstleister, Erziehung, Gesundheit" hat den höchsten Krankenstand aller Branchen (2023: 258 AU-Fälle je 100 GKV-Mitgliedsjahre, Durchschnitt: 226).
 
