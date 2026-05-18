@@ -77,6 +77,16 @@ RUN curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}" && \
     install -m 0755 /root/.bun/bin/bun /usr/local/bin/bun && \
     rm -rf /root/.bun
 
+# ---- Python 3.12 (Standalone via uv) ----------------------------------------
+# Some Skills (e.g. last30days) require Python >=3.12 in their pyproject.toml.
+# Debian Bookworm ships 3.11; instead of mixing bookworm + trixie repos or
+# building from source, install uv and let it manage a standalone CPython 3.12.
+# python3 (3.11 from apt above) stays the system default for yt-dlp & Co.
+RUN curl -fsSL https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh && \
+    uv python install 3.12 && \
+    ln -s "$(uv python find 3.12)" /usr/local/bin/python3.12 && \
+    /usr/local/bin/python3.12 --version
+
 # ---- YouTube-Toolchain (yt-dlp + Deno) --------------------------------------
 # yt-dlp: standalone Python zipapp from official release (uses python3 from apt above)
 RUN curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
