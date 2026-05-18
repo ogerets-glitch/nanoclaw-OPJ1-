@@ -82,9 +82,15 @@ RUN curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}" && \
 # Debian Bookworm ships 3.11; instead of mixing bookworm + trixie repos or
 # building from source, install uv and let it manage a standalone CPython 3.12.
 # python3 (3.11 from apt above) stays the system default for yt-dlp & Co.
+#
+# UV_PYTHON_INSTALL_DIR pins the install location to a world-readable path —
+# without it uv writes to $HOME/.local/share/uv/python, which is /root/... at
+# build time and unreadable by the non-root `node` user that runs the agent.
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv-python
 RUN curl -fsSL https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh && \
     uv python install 3.12 && \
     ln -s "$(uv python find 3.12)" /usr/local/bin/python3.12 && \
+    chmod -R a+rX /opt/uv-python && \
     /usr/local/bin/python3.12 --version
 
 # ---- YouTube-Toolchain (yt-dlp + Deno) --------------------------------------
