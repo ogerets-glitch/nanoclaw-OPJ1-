@@ -18,17 +18,18 @@ description: >
 
 Skill für alles rund um Olivers aktuellen Standort: Wo ist er, wie kommt er von dort weiter, was ist in der Nähe, wie wird das Wetter, wo war er. Quelle ist der `location-service` MCP-Server auf dem VPS — er bündelt mehrere externe APIs hinter einer einheitlichen Tool-Schicht.
 
-## Tools (7)
+## Tools (8)
 
 | Tool | Funktion | Default-Parameter |
 |------|----------|-------------------|
 | `location_current` | Aktueller Standort + Adresse (roh, minimal). | — |
 | `location_context` | **Sammel-Bundle:** Standort + Adresse + 3 nächste Haltestellen + Wetter + POIs im 500-m-Umkreis. Ein Tool, ein Aufruf. | — |
 | `location_nearby` | POIs in der Nähe, gefiltert nach Kategorie. | `radius_m=500`, `limit=20`, `categories=None` |
-| `location_departures` | Live-Abfahrten (Echtzeit). Ohne `station`-Argument: nächstgelegene Haltestelle, **AVV-HAFAS + DB-HAFAS gemerged**. Mit explizitem `station` nur **eine** Quelle — siehe Warnung unten. | `limit=10`, `station=None` |
-| `location_trip_plan` | Nächste Verbindungen vom aktuellen Standort zum Ziel. Ziel als Stationsname **oder** Adresse. | `results=3`, `when=None` (= jetzt) |
+| `location_departures` | Live-Abfahrten (Echtzeit). **AVV-HAFAS und DB-HAFAS parallel** — bei `station=None` über Geo-Nähe, bei explizitem `station=`-String über parallele Text-Suche mit Name-Match. Siehe Detail unten. | `limit=10`, `station=None` |
+| `location_trip_plan` | Nächste Verbindungen vom aktuellen Standort zum Ziel. Ziel als Stationsname **oder** Adresse. Aachen-/Eifel-Routen via AVV, Fernverkehr via DB, Mixed-Region DB-first mit AVV-Fallback. | `results=3`, `when=None` (= jetzt) |
 | `location_weather` | Aktuelles Wetter + Tagesvorhersage. | — |
 | `location_history` | Standort-Verlauf (älter zuerst kürzbar). | `limit=50`, `since=None` |
+| `location_health` | Backend-Status (DB-HAFAS + AVV-HAFAS) mit Latenz pro Quelle und `summary: "ok" / "all_down"`. Nutzen, wenn ein Verkehrs-Tool unerwartet leer liefert oder einen Upstream-Fehler meldet — zeigt sofort, ob die ÖPNV-Quellen erreichbar sind. | — |
 
 ### `location_nearby` — gültige `categories`
 
@@ -38,16 +39,31 @@ Skill für alles rund um Olivers aktuellen Standort: Wo ist er, wie kommt er von
 
 ISO-8601 mit Zeitzone, z.B. `"2026-04-30T07:30:00+02:00"` für Verbindungen ab Mittwoch 7:30. Ohne `when`: ab jetzt.
 
-### `location_departures` — `station=None` ist nicht nur "Default", sondern wichtig
+### `location_trip_plan` — Regions-Routing
 
-Bei `station=None` (Auto-Modus, live-Position) fragt der Server **AVV-HAFAS und DB-HAFAS parallel** ab und mergt die Ergebnisse. Sobald ein Stationsname oder eine Stop-ID explizit übergeben wird, läuft nur **eine** Quelle:
+Seit 2026-05-19 nutzt der Service AVV-HAFAS auch für Trip-Planning (vorher nur DB). Die Heuristik:
 
-- DB-Stop-ID (z.B. `8000001` Aachen Hbf) → nur DB-HAFAS
-- AVV-Stationsname → nur AVV-HAFAS
+| From-Region | To-Region | Reihenfolge |
+|---|---|---|
+| AVV (Aachen-Stadt/StädteRegion/Eifel) | AVV (z.B. Monschau, Stolberg, Eschweiler) | AVV-first |
+| DB | DB (Fernverkehr) | DB-first |
+| Mixed (z.B. AVV → DB-Fernverkehr) | — | DB-first mit AVV-Fallback |
 
-**Konsequenz:** Lokale Bus-Linien der ASEAG (SB66 Brand↔Monschau, 22, 25, 47 etc.) liegen ausschließlich in AVV-HAFAS. Wenn der Bot eine DB-Station übergibt — oder einen Stationsnamen, den DB-HAFAS auflöst, AVV aber besser kennt — fallen die ASEAG-Linien aus der Antwort, und Oliver kriegt eine zu kurze Liste, ohne dass das im Output sichtbar wird.
+**Konsequenz:** Routen wie `to="Monschau"` von Aachen aus liefern jetzt **direkte Bus-SB66-Verbindungen** statt eines 502, auch wenn DB-HAFAS gerade ausgefallen ist. Antwort enthält `data_source: "avv-hafas"` oder `"db-hafas"`, plus `tried: [...]` mit den probierten Backends.
 
-**Faustregel:** Wenn Olivers aktuelle Position passt, **`station=None` lassen** und auf den Merge vertrauen. Eine Station nur explizit übergeben, wenn er gezielt nach einer entfernten Haltestelle fragt — und dann **AVV-Stop-IDs bevorzugen** für Aachen-/Eifel-Region (Liste in OpenBrain #417 für die häufigsten Knoten: Brand `1127`, Bushof Aachen `1063`, Imgenbroich `4788`, Monschau Altstadt `4867`).
+### `location_departures` — drei Pfade, keine Lücke mehr
+
+Seit 2026-05-19 ist der explizite-Station-Pfad nicht mehr DB-only.
+
+| Eingabe | Wie wird aufgelöst |
+|---------|--------------------|
+| `station=None` (Auto-Modus) | Geo-Nähe-Lookup parallel über DB- und AVV-HAFAS, dann **Merge mit Dedup** im 2-Min-Fenster. Beste Coverage für Live-Position. |
+| `station="<Name>"` (Text) | **Parallele Text-Suche** in DB+AVV. Name-Substring-Match priorisiert das passende Backend — "Scheibenstraße" landet auf AVV, "Berlin Hbf" auf DB. Danach `departures()` über den richtigen Client. |
+| `station="<Stop-ID>"` (numerisch) | Wird als DB-Stop-ID behandelt (Konvention). |
+
+**Konsequenz:** Lokale ASEAG-Linien (SB66 Brand↔Monschau, 22, 25, 47 …) erscheinen jetzt auch bei expliziter Text-Eingabe in der Antwort, weil AVV-HAFAS automatisch mit angefragt wird. Die alte Lücke (DB-Stationsname schluckt ASEAG-Linien) existiert nicht mehr für Text-Inputs — nur noch wenn der Bot explizit eine **numerische DB-IBNR** übergibt.
+
+**Faustregel:** `station=None` bleibt erste Wahl wenn Oliver an der gemeinten Haltestelle steht. Bei Stationsnamen darf der Bot jetzt entspannt Text übergeben (`"Scheibenstraße"`, `"Bushof Aachen"`, `"Monschau Altstadt"`) — die Heuristik routet richtig. Für überregionale Bahnhöfe Text-Name oder DB-IBNR (z.B. `8000001` Aachen Hbf) beide OK.
 
 ## Typische Anfragen → Tool-Mapping
 
@@ -56,7 +72,7 @@ Bei `station=None` (Auto-Modus, live-Position) fragt der Server **AVV-HAFAS und 
 | "Wo bin ich gerade?" | `location_current` | Wenn nur die Adresse gefragt ist |
 | "Was ist los um mich herum?" | `location_context` | Bundle, ein Aufruf statt vier |
 | "Wann fährt mein Bus?" | `location_departures` | Default = nächste Haltestelle |
-| "Wann fährt der Bus an Haltestelle X?" | `location_departures` mit `station="X"` | **Achtung: Merge wird deaktiviert** — nur AVV oder nur DB. ASEAG-Linien fehlen ggf. Wenn Oliver an X steht, lieber `station=None`. Für Aachen-/Eifel-Knoten AVV-Stop-IDs aus #417 bevorzugen. |
+| "Wann fährt der Bus an Haltestelle X?" | `location_departures` mit `station="X"` | Text-Eingabe geht parallel durch DB+AVV mit Name-Match — ASEAG-Linien sind dabei. Wenn Oliver direkt an X steht, ist `station=None` trotzdem die einfachste Wahl (Geo-Merge). |
 | "Wie komme ich nach Köln?" | `location_trip_plan` mit `to="Köln Hbf"` | Bahnhofsname oder Adresse |
 | "Wie komme ich morgen früh um 7 zu Caritas?" | `location_trip_plan` mit `to`, `when` | `when` als ISO-8601 mit `+02:00` |
 | "Wo gibts hier ein Café?" | `location_nearby` mit `categories=["food"]` | ggf. `radius_m` erhöhen wenn leer |
@@ -98,7 +114,10 @@ Der MCP-Server bündelt diese externen Quellen:
 | 404 / "kein Standort" | OwnTracks pausiert, Handy aus, Telegram-Standort abgelaufen | User informieren — nicht halluzinieren, nicht den letzten History-Eintrag als „aktuell" verkaufen |
 | Leere Abfahrtsliste an gültiger Haltestelle | Spät nachts, Betriebspause, Streik | User mit Hinweis melden; ggf. `location_trip_plan` für Alternativen |
 | `trip_plan` findet Ziel nicht | Tippfehler im Stationsnamen, mehrdeutige Adresse | Mit präziserem `to` retrien (z.B. „Köln Hbf" statt „Köln") |
-| 5xx Upstream-Fehler | DB-rest oder AVV-HAFAS gerade down | Beim nächsten Versuch erneut probieren, dem User offen kommunizieren |
+| 502 mit strukturiertem Body | Beide Backends down oder Schema-Mismatch | Body enthält `{backend, endpoint, error_class, suggested_action}`. Bei `error_class:"timeout"` ein zweiter Versuch nach ~30 s; bei `4xx` (`suggested_action:"user_input_needed"`) Oliver bitten zu präzisieren. |
+| Antwort kommt nur aus einer Quelle (`data_source:"db-hafas"` oder `"avv-hafas"`) statt Merge | Das andere Backend war stumm oder hatte keinen Treffer | Normal. Kein Fehler. |
+
+**Diagnose vor der Antwort:** Bei wiederholtem leerem Ergebnis oder bevor der Bot sich auf eine Verspätung festlegt, einen Blick auf `location_health` werfen — das Tool sagt direkt, ob DB-HAFAS oder AVV-HAFAS gerade hängt. Spart Rätselraten und macht die Bot-Antwort an Oliver ehrlich (»AVV ist gerade offline, deshalb fehlen die Stadtbus-Daten«).
 
 ## Datenschutz
 
