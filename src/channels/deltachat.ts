@@ -58,6 +58,31 @@ const ATTACHMENT_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 const IMAGE_VIEW_TYPES = new Set<T.Viewtype>(['Image', 'Gif', 'Sticker']);
 const VIDEO_VIEW_TYPES = new Set<T.Viewtype>(['Video']);
 
+// Auto-respawn schedule when the deltachat-rpc-server subprocess exits
+// unexpectedly. Index = prior attempt count, value = delay before the next
+// respawn try in milliseconds. Attempts beyond the last entry use the final
+// value as a steady-state poll cadence.
+const RESPAWN_BACKOFF_MS: readonly number[] = [1_000, 2_000, 5_000, 10_000, 30_000, 60_000];
+// After this many consecutive failures we give up and leave the channel dead
+// so a structural defect (corrupt DB, missing binary) doesn't burn CPU in a
+// permanent retry loop. The operator must `systemctl restart` then.
+const MAX_RESPAWN_ATTEMPTS = 12;
+// Once a respawn has stayed connected this long, reset the attempt counter so
+// a future single crash starts from the fast end of the backoff sequence.
+const RESPAWN_STABILITY_RESET_MS = 5 * 60 * 1000;
+
+/**
+ * Delay before the next respawn attempt given how many prior attempts have
+ * already failed. Exported for unit tests; pure function.
+ */
+export function computeRespawnDelay(priorAttempts: number): number {
+  if (priorAttempts < 0) return RESPAWN_BACKOFF_MS[0]!;
+  if (priorAttempts >= RESPAWN_BACKOFF_MS.length) {
+    return RESPAWN_BACKOFF_MS[RESPAWN_BACKOFF_MS.length - 1]!;
+  }
+  return RESPAWN_BACKOFF_MS[priorAttempts]!;
+}
+
 interface DeltachatAdapterConfig {
   rpcServerPath: string;
   accountsDir: string;
@@ -201,6 +226,14 @@ function createDeltachatAdapter(config: DeltachatAdapterConfig): ChannelAdapter 
   let setup: ChannelSetup | null = null;
   let ourAccountId: number | null = null;
   let connected = false;
+  // Set by teardown() so the exit-handler can distinguish an operator-initiated
+  // shutdown from an unexpected crash.
+  let teardownRequested = false;
+  // Counts consecutive failed respawn attempts. Reset to 0 by the stability
+  // timer once a respawn has stayed up for RESPAWN_STABILITY_RESET_MS.
+  let respawnAttempts = 0;
+  let respawnInFlight = false;
+  let stabilityResetTimer: NodeJS.Timeout | null = null;
 
   function emitInbound(
     contactId: number,
@@ -439,6 +472,14 @@ function createDeltachatAdapter(config: DeltachatAdapterConfig): ChannelAdapter 
     proc.on('exit', (code, signal) => {
       log.warn('Delta-Chat rpc-server exited', { code, signal });
       connected = false;
+      // Drop any pending stability-reset; the connection it was guarding is
+      // gone. A fresh timer is armed once we reconnect.
+      if (stabilityResetTimer) {
+        clearTimeout(stabilityResetTimer);
+        stabilityResetTimer = null;
+      }
+      if (teardownRequested) return;
+      void attemptRespawn();
     });
     // rpc-server logs to stderr — surface as info so journalctl picks it up.
     proc.stderr.on('data', (buf: Buffer) => {
@@ -446,6 +487,76 @@ function createDeltachatAdapter(config: DeltachatAdapterConfig): ChannelAdapter 
       if (line) log.debug('Delta-Chat rpc-server', { line });
     });
     dc = new StdioDeltaChat(proc.stdin, proc.stdout, /* startEventLoop */ true);
+  }
+
+  // Named so it can be re-attached after a respawn without duplicating the
+  // body. Captures `dc`/`ourAccountId` via closure on each call so a fresh
+  // StdioDeltaChat instance after respawn picks up the latest references.
+  function handleIncomingMsg(eventAccountId: number, event: DcEventType<'IncomingMsg'>): void {
+    if (eventAccountId !== ourAccountId) return;
+    handleIncoming(eventAccountId, event.chatId, event.msgId).catch((err) => {
+      log.error('Delta-Chat: handleIncoming threw', { msgId: event.msgId, err });
+    });
+  }
+
+  // Spawn the rpc-server, discover the account, start IO, attach event
+  // handler. Used by both initial setup() and attemptRespawn() so the wiring
+  // stays in one place.
+  async function connectRpc(): Promise<void> {
+    await spawnRpcServer();
+    if (!dc) throw new Error('Delta-Chat: dc initialization failed');
+    ourAccountId = await discoverAccount();
+    await dc.rpc.startIo(ourAccountId);
+    dc.on('IncomingMsg', handleIncomingMsg);
+    connected = true;
+  }
+
+  async function attemptRespawn(): Promise<void> {
+    if (respawnInFlight || teardownRequested) return;
+    respawnInFlight = true;
+    try {
+      while (!teardownRequested) {
+        const delay = computeRespawnDelay(respawnAttempts);
+        respawnAttempts += 1;
+        log.info('Delta-Chat rpc-server respawn scheduled', {
+          attempt: respawnAttempts,
+          delayMs: delay,
+        });
+        await new Promise<void>((resolve) => setTimeout(resolve, delay));
+        if (teardownRequested) return;
+        try {
+          await connectRpc();
+          log.info('Delta-Chat rpc-server respawned', {
+            attempt: respawnAttempts,
+            accountId: ourAccountId,
+          });
+          // Arm the stability-reset: if we stay connected long enough, zero
+          // the counter so the next isolated crash starts fast again.
+          stabilityResetTimer = setTimeout(() => {
+            if (connected) {
+              respawnAttempts = 0;
+              log.debug('Delta-Chat respawn attempt counter reset (stable)');
+            }
+            stabilityResetTimer = null;
+          }, RESPAWN_STABILITY_RESET_MS);
+          return;
+        } catch (err) {
+          log.error('Delta-Chat rpc-server respawn failed', {
+            attempt: respawnAttempts,
+            err,
+          });
+          if (respawnAttempts >= MAX_RESPAWN_ATTEMPTS) {
+            log.error('Delta-Chat rpc-server: giving up after max attempts', {
+              maxAttempts: MAX_RESPAWN_ATTEMPTS,
+            });
+            return;
+          }
+          // Loop will compute the next backoff slot and try again.
+        }
+      }
+    } finally {
+      respawnInFlight = false;
+    }
   }
 
   async function discoverAccount(): Promise<number> {
@@ -527,6 +638,8 @@ function createDeltachatAdapter(config: DeltachatAdapterConfig): ChannelAdapter 
 
     async setup(cfg: ChannelSetup): Promise<void> {
       setup = cfg;
+      teardownRequested = false;
+      respawnAttempts = 0;
       await mkdir(config.accountsDir, { recursive: true });
       await mkdir(config.attachmentsInDir, { recursive: true });
       await mkdir(config.attachmentsOutDir, { recursive: true });
@@ -535,21 +648,7 @@ function createDeltachatAdapter(config: DeltachatAdapterConfig): ChannelAdapter 
       cleanupOldAttachments(config.attachmentsInDir, ATTACHMENT_TTL_MS).catch(() => undefined);
       cleanupOldAttachments(config.attachmentsOutDir, ATTACHMENT_TTL_MS).catch(() => undefined);
 
-      await spawnRpcServer();
-      if (!dc) throw new Error('Delta-Chat: dc initialization failed');
-      ourAccountId = await discoverAccount();
-      await dc.rpc.startIo(ourAccountId);
-
-      // Wire the event handler. Bind a non-async wrapper so the emitter
-      // doesn't capture a floating promise.
-      dc.on('IncomingMsg', (eventAccountId: number, event: DcEventType<'IncomingMsg'>) => {
-        if (eventAccountId !== ourAccountId) return;
-        handleIncoming(eventAccountId, event.chatId, event.msgId).catch((err) => {
-          log.error('Delta-Chat: handleIncoming threw', { msgId: event.msgId, err });
-        });
-      });
-
-      connected = true;
+      await connectRpc();
       log.info('Delta-Chat channel connected', {
         accountId: ourAccountId,
         accountsDir: config.accountsDir,
@@ -558,6 +657,13 @@ function createDeltachatAdapter(config: DeltachatAdapterConfig): ChannelAdapter 
     },
 
     async teardown(): Promise<void> {
+      // Set the guard first so an in-flight respawn aborts and the exit
+      // handler that fires from our own SIGTERM below doesn't relaunch.
+      teardownRequested = true;
+      if (stabilityResetTimer) {
+        clearTimeout(stabilityResetTimer);
+        stabilityResetTimer = null;
+      }
       connected = false;
       if (dc && ourAccountId !== null) {
         try {

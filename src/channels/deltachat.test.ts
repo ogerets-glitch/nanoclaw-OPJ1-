@@ -9,7 +9,14 @@
  */
 import { describe, it, expect } from 'vitest';
 
-import { chunkText, sanitizeFilename, toAgentPath, toolHintForMime, viewtypeForOutbound } from './deltachat.js';
+import {
+  chunkText,
+  computeRespawnDelay,
+  sanitizeFilename,
+  toAgentPath,
+  toolHintForMime,
+  viewtypeForOutbound,
+} from './deltachat.js';
 
 describe('chunkText', () => {
   it('returns the input unchanged when below the limit', () => {
@@ -128,6 +135,31 @@ describe('toAgentPath', () => {
   it('returns host path unchanged when it does not start with host prefix', () => {
     const out = toAgentPath('/other/path/foo.bin', '/some/path', '/mapped');
     expect(out).toBe('/other/path/foo.bin');
+  });
+});
+
+describe('computeRespawnDelay', () => {
+  it('returns the fast end of the backoff sequence for the first attempt', () => {
+    expect(computeRespawnDelay(0)).toBe(1_000);
+  });
+
+  it('walks through the backoff schedule', () => {
+    expect(computeRespawnDelay(1)).toBe(2_000);
+    expect(computeRespawnDelay(2)).toBe(5_000);
+    expect(computeRespawnDelay(3)).toBe(10_000);
+    expect(computeRespawnDelay(4)).toBe(30_000);
+    expect(computeRespawnDelay(5)).toBe(60_000);
+  });
+
+  it('plateaus at the final backoff value for large attempt counts', () => {
+    expect(computeRespawnDelay(6)).toBe(60_000);
+    expect(computeRespawnDelay(20)).toBe(60_000);
+    expect(computeRespawnDelay(1_000)).toBe(60_000);
+  });
+
+  it('clamps negative inputs to the fastest delay', () => {
+    expect(computeRespawnDelay(-1)).toBe(1_000);
+    expect(computeRespawnDelay(-100)).toBe(1_000);
   });
 });
 
