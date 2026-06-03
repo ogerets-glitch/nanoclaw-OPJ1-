@@ -11,3 +11,4 @@ import './cli.js';
 // Telegram + Signal removed 2026-05-14 — OPJ1 cutover to SimpleX. Their
 // source files remain on disk for reference but are no longer imported.
 import './simplex.js';
+import './deltachat.js';
