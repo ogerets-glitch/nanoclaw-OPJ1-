@@ -42,7 +42,7 @@ import './deltachat.js';
 ### 4. Install the adapter package (pinned)
 
 ```bash
-pnpm install @deltachat/stdio-rpc-server@2.49.0
+pnpm install @deltachat/jsonrpc-client@2.49.0
 ```
 
 ### 5. Build
