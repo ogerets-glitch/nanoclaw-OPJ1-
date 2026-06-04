@@ -19,14 +19,14 @@ ALLOWED_INTENTS = {
 }
 ALLOWED_CLUSTER_MODES = {"none", "story", "workflow", "market", "debate"}
 QUICK_SOURCE_PRIORITY = {
-    "factual": ["hackernews", "reddit", "x", "youtube"],
-    "product": ["youtube", "reddit", "x", "tiktok"],
-    "concept": ["hackernews", "reddit", "x", "youtube"],
-    "opinion": ["reddit", "x", "youtube", "hackernews"],
-    "how_to": ["youtube", "reddit", "x", "hackernews"],
-    "comparison": ["reddit", "x", "hackernews", "youtube"],
-    "breaking_news": ["x", "reddit", "hackernews", "youtube", "polymarket"],
-    "prediction": ["polymarket", "x", "hackernews", "reddit", "youtube"],
+    "factual": ["hackernews", "reddit", "x", "xquik", "youtube"],
+    "product": ["youtube", "reddit", "x", "xquik", "tiktok"],
+    "concept": ["hackernews", "reddit", "x", "xquik", "youtube"],
+    "opinion": ["reddit", "x", "xquik", "youtube", "hackernews"],
+    "how_to": ["youtube", "reddit", "x", "xquik", "hackernews"],
+    "comparison": ["reddit", "x", "xquik", "hackernews", "youtube"],
+    "breaking_news": ["x", "xquik", "reddit", "hackernews", "youtube", "polymarket"],
+    "prediction": ["polymarket", "x", "xquik", "hackernews", "reddit", "youtube"],
 }
 SOURCE_PRIORITY = {
     "factual": ["hackernews", "reddit", "x", "youtube"],
@@ -60,6 +60,7 @@ INTENT_SOURCE_EXCLUSIONS: dict[str, set[str]] = {
 SOURCE_CAPABILITIES = {
     "reddit": {"discussion", "social"},
     "x": {"discussion", "social"},
+    "xquik": {"discussion", "social"},
     "youtube": {"video", "video_longform", "discussion"},
     "tiktok": {"video", "video_shortform", "social"},
     "instagram": {"video", "video_shortform", "social"},
@@ -67,6 +68,7 @@ SOURCE_CAPABILITIES = {
     "bluesky": {"discussion", "social"},
     "truthsocial": {"discussion", "social"},
     "polymarket": {"market"},
+    "digg": {"discussion", "social", "link"},
     "xiaohongshu": {"video", "video_shortform", "social"},
     "github": {"discussion", "link"},
     "grounding": {"web", "reference", "link"},
@@ -86,9 +88,16 @@ def plan_query(
     provider: providers.ReasoningClient | None,
     model: str | None,
     context: str = "",
+    internal_subrun: bool = False,
 ) -> schema.QueryPlan:
     """Create a query plan. Comparison queries with extractable entities use a
-    deterministic plan; other intents prefer the configured reasoning provider."""
+    deterministic plan; other intents prefer the configured reasoning provider.
+
+    internal_subrun: when True, suppress the LAW 7 "No --plan passed" stderr
+    warning. LAW 7 targets the hosting-reasoning-model path; competitor
+    fan-out sub-runs are engine-internal and the warning is a false positive
+    there. Default False preserves the warning on every user-facing invocation.
+    """
     if _should_force_deterministic_plan(topic):
         return _fallback_plan(
             topic,
@@ -122,16 +131,17 @@ def plan_query(
     # planner credentials - NOT a prerequisite the caller needs. If you are
     # the hosting reasoning model, YOU are the provider. LAW 7 / 2026-04-19
     # Hermes Agent Use Cases failure mode.
-    import sys
-    print(
-        "[Planner] No --plan passed. If you are the reasoning model hosting "
-        "this skill (Claude Code, Codex, Hermes, Gemini, or any agent runtime), "
-        "YOU ARE the planner: generate a JSON query plan yourself and pass it "
-        "via --plan. You do not need an API key or credentials; you ARE the "
-        "LLM. The deterministic fallback below is the headless/cron path only. "
-        "See LAW 7 in SKILL.md and Step 0.75 for the plan schema.",
-        file=sys.stderr,
-    )
+    if not internal_subrun:
+        import sys
+        print(
+            "[Planner] No --plan passed. If you are the reasoning model hosting "
+            "this skill (Claude Code, Codex, Hermes, Gemini, or any agent runtime), "
+            "YOU ARE the planner: generate a JSON query plan yourself and pass it "
+            "via --plan. You do not need an API key or credentials; you ARE the "
+            "LLM. The deterministic fallback below is the headless/cron path only. "
+            "See LAW 7 in SKILL.md and Step 0.75 for the plan schema.",
+            file=sys.stderr,
+        )
     return _fallback_plan(topic, available_sources, requested_sources, depth)
 
 
@@ -264,7 +274,15 @@ def _sanitize_plan(
         freshness_mode=freshness_mode,
         cluster_mode=cluster_mode,
         raw_topic=topic,
-        subqueries=_normalize_subquery_weights(_trim_subqueries_for_depth(subqueries, intent, depth, eligible_sources)),
+        subqueries=_normalize_subquery_weights(
+            _trim_subqueries_for_depth(
+                subqueries,
+                intent,
+                depth,
+                eligible_sources,
+                requested_sources=requested_sources,
+            )
+        ),
         source_weights=source_weights,
         notes=[str(note).strip() for note in raw.get("notes") or [] if str(note).strip()],
     )
@@ -297,6 +315,7 @@ def _trim_subqueries_for_depth(
     intent: str,
     depth: str,
     available_sources: list[str],
+    requested_sources: list[str] | None = None,
 ) -> list[schema.SubQuery]:
     # At non-quick depth, expand sources: use capability routing for intents
     # that define it, or all available sources otherwise. The LLM planner may
@@ -326,6 +345,15 @@ def _trim_subqueries_for_depth(
     for subquery in subqueries:
         if depth in {"quick", "default"}:
             preferred_sources = ranked_sources[:limit]
+            if requested_sources:
+                requested = [
+                    source
+                    for source in requested_sources
+                    if source in available_sources and source in subquery.sources
+                ]
+                for source in requested:
+                    if source not in preferred_sources:
+                        preferred_sources.append(source)
         else:
             preferred_sources = [source for source in ranked_sources if source in subquery.sources][:limit]
             if len(preferred_sources) < limit:
@@ -418,7 +446,13 @@ def _fallback_plan(
         cluster_mode=_default_cluster_mode(intent),
         raw_topic=topic,
         subqueries=_normalize_subquery_weights(
-            _trim_subqueries_for_depth(subqueries[:_max_subqueries(intent, topic)], intent, depth, list(source_weights))
+            _trim_subqueries_for_depth(
+                subqueries[:_max_subqueries(intent, topic)],
+                intent,
+                depth,
+                list(source_weights),
+                requested_sources=requested_sources,
+            )
         ),
         source_weights=_normalize_weights(source_weights),
         notes=[note],

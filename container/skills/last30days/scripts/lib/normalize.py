@@ -49,6 +49,7 @@ def normalize_source_items(
         "xquik": _normalize_x,
         "pinterest": _normalize_pinterest,
         "polymarket": _normalize_polymarket,
+        "digg": _normalize_digg,
         "grounding": _normalize_grounding,
         "xiaohongshu": _normalize_grounding,
         "github": _normalize_github,
@@ -110,6 +111,19 @@ def _first_present(d: dict[str, Any], keys: tuple[str, ...], default: Any) -> An
     return default
 
 
+def _join_comment_excerpts(
+    top_comments: list[Any],
+    key: str,
+    limit: int = 3,
+) -> str:
+    """Space-join the `key` field from the first `limit` dict-shaped comments."""
+    return " ".join(
+        str(comment.get(key) or "").strip()
+        for comment in top_comments[:limit]
+        if isinstance(comment, dict)
+    )
+
+
 def _domain_from_url(url: str) -> str | None:
     if not url:
         return None
@@ -169,11 +183,7 @@ def _normalize_reddit(
     to_date: str,
 ) -> schema.SourceItem:
     top_comments = item.get("top_comments") or []
-    comment_text = " ".join(
-        str(comment.get("excerpt") or "").strip()
-        for comment in top_comments[:3]
-        if isinstance(comment, dict)
-    )
+    comment_text = _join_comment_excerpts(top_comments, "excerpt")
     body = "\n".join(
         part
         for part in [
@@ -241,6 +251,11 @@ def _normalize_youtube(
     metadata: dict[str, Any] = {}
     if highlights:
         metadata["transcript_highlights"] = highlights
+    if item.get("captions_disabled"):
+        # Surfaced for quality_nudge: uploader disabled captions, so this
+        # video should be subtracted from the degraded-transcript-ratio
+        # denominator (it was never going to produce a transcript).
+        metadata["captions_disabled"] = True
     metadata["top_comments"] = _remap_comments(
         item.get("top_comments") or [],
         score_keys=("score", "likes"),
@@ -338,11 +353,7 @@ def _normalize_hackernews(
     to_date: str,
 ) -> schema.SourceItem:
     top_comments = item.get("top_comments") or []
-    comment_text = " ".join(
-        str(comment.get("text") or "").strip()
-        for comment in top_comments[:3]
-        if isinstance(comment, dict)
-    )
+    comment_text = _join_comment_excerpts(top_comments, "text")
     title = str(item.get("title") or "").strip()
     body = "\n".join(part for part in [title, str(item.get("text") or "").strip(), comment_text] if part)
     return _source_item(
@@ -394,6 +405,53 @@ def _normalize_microblog(
     )
 
 
+def _normalize_digg(
+    source: str,
+    item: dict[str, Any],
+    index: int,
+    from_date: str,
+    to_date: str,
+) -> schema.SourceItem:
+    """Normalizer for Digg AI 1000 clusters.
+
+    Each cluster is one item. The TLDR carries the most useful body for
+    rerank and synthesis. Top-ranked X posts attached at search time are
+    passed through under metadata['posts'] so render can emit them as
+    inline 'via Digg' quotes.
+    """
+    title = str(item.get("title") or "").strip()
+    tldr = str(item.get("tldr") or "").strip()
+    body = "\n\n".join(part for part in [title, tldr] if part)
+    posts = item.get("posts") or []
+    if not isinstance(posts, list):
+        posts = []
+    cluster_url_id = str(item.get("id") or f"DG{index + 1}")
+    return _source_item(
+        item_id=cluster_url_id,
+        source=source,
+        title=title or f"Digg cluster {index + 1}",
+        body=body,
+        url=str(item.get("url") or f"https://di.gg/ai/{cluster_url_id}"),
+        author="",
+        container="Digg",
+        published_at=item.get("date"),
+        date_confidence=_date_confidence(item, from_date, to_date, default="high"),
+        engagement=item.get("engagement") or {},
+        relevance_hint=item.get("relevance", 0.5),
+        why_relevant=str(item.get("why_relevant") or ""),
+        snippet=tldr[:400],
+        metadata={
+            "clusterUrlId": cluster_url_id,
+            "tldr": tldr,
+            "rank": (item.get("engagement") or {}).get("rank"),
+            "uniqueAuthors": (item.get("engagement") or {}).get("uniqueAuthors"),
+            "postCount": (item.get("engagement") or {}).get("postCount"),
+            "firstPostAge": item.get("first_post_age"),
+            "posts": posts,
+        },
+    )
+
+
 def _normalize_polymarket(
     source: str,
     item: dict[str, Any],
@@ -441,11 +499,7 @@ def _normalize_github(
     title = str(item.get("title") or "").strip()
     snippet_text = str(item.get("snippet") or "").strip()
     top_comments = item.get("metadata", {}).get("top_comments") or []
-    comment_text = " ".join(
-        str(comment.get("excerpt") or "").strip()
-        for comment in top_comments[:3]
-        if isinstance(comment, dict)
-    )
+    comment_text = _join_comment_excerpts(top_comments, "excerpt")
     body = "\n".join(part for part in [title, snippet_text, comment_text] if part)
     metadata = item.get("metadata") or {}
     return _source_item(

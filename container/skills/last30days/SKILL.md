@@ -1,6 +1,6 @@
 ---
 name: last30days
-version: "3.0.1"
+version: "3.3.1"
 description: "Research what people actually say about any topic in the last 30 days. Pulls posts and engagement from Reddit, X, YouTube, TikTok, Hacker News, Polymarket, GitHub, and the web."
 argument-hint: 'last30days nvidia earnings reaction | last30days AI video tools | last30days what users want in react'
 allowed-tools: Bash, Read, Write, AskUserQuestion, WebSearch
@@ -13,9 +13,9 @@ metadata:
   openclaw:
     emoji: "📰"
     requires:
-      env:
-        - SCRAPECREATORS_API_KEY
+      env: []
       optionalEnv:
+        - SCRAPECREATORS_API_KEY
         - OPENAI_API_KEY
         - XAI_API_KEY
         - OPENROUTER_API_KEY
@@ -45,6 +45,7 @@ metadata:
       - instagram
       - hackernews
       - polymarket
+      - digg
       - bluesky
       - truthsocial
       - trends
@@ -59,6 +60,35 @@ metadata:
       - clawhub
 ---
 
+# STEP 0: STALE-CLONE SELF-CHECK — RUN BEFORE READING BELOW
+
+Before reading anything else in this file, check whether you loaded SKILL.md from the one known stale-clone location: Claude Code's marketplaces directory.
+
+**Run this check:**
+
+```bash
+CLAUDE_CACHE_LATEST=$(find "$HOME/.claude/plugins/cache/last30days-skill/last30days" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -V | tail -1)
+# Two cache layouts ship in the wild — nested ({version}/skills/last30days/SKILL.md)
+# and flat ({version}/SKILL.md). Resolve to whichever shape actually exists.
+CLAUDE_CACHE_SKILL_MD=""
+if [ -n "$CLAUDE_CACHE_LATEST" ]; then
+  if [ -f "$CLAUDE_CACHE_LATEST/skills/last30days/SKILL.md" ]; then
+    CLAUDE_CACHE_SKILL_MD="$CLAUDE_CACHE_LATEST/skills/last30days/SKILL.md"
+  elif [ -f "$CLAUDE_CACHE_LATEST/SKILL.md" ]; then
+    CLAUDE_CACHE_SKILL_MD="$CLAUDE_CACHE_LATEST/SKILL.md"
+  fi
+fi
+echo "CLAUDE_CACHE_SKILL_MD=$CLAUDE_CACHE_SKILL_MD"
+```
+
+If the SKILL.md path you just Read contains `/.claude/plugins/marketplaces/` AND `$CLAUDE_CACHE_SKILL_MD` is non-empty, STOP and re-read `$CLAUDE_CACHE_SKILL_MD` before proceeding. Otherwise the SKILL.md you have is fine — continue.
+
+**Why this specific check:** `~/.claude/plugins/marketplaces/last30days-skill/` is a git clone Claude Code auto-restores to `origin/main` on session start. It can lag the versioned cache by one or more releases. Three 2026-04-22 test runs (Linear, Coinbase) loaded SKILL.md from `marketplaces/`, ran `--help` from the same stale path, did not see the `--competitors` flag that existed in the cache, and fell back to a manual comparison plan. Result: 2 of 3 windows never invoked the feature they were asked to test. STEP 0 defends against that one Claude Code-specific bug.
+
+**Other install paths are fine:** `~/.codex/skills/`, `~/.agents/skills/`, an `npx skills add` install dir, or a repo checkout are all valid load points - the resolver in Step 1 picks them up. Do NOT abort or hop on those paths.
+
+---
+
 # SKILL CONTRACT — READ BEFORE ANY TOOL CALL
 
 You are inside the `/last30days` SKILL. This is a specific research tool with a 1400+ line instruction contract (the rest of this file) that defines EXACTLY how to produce the research output. It is not a generic "last 30 days of X" research prompt. Do NOT treat `/last30days` as a search keyword you can improvise against.
@@ -67,7 +97,7 @@ You are inside the `/last30days` SKILL. This is a specific research tool with a 
 
 **How v3.0.7 fixes it:** three structural anchors.
 1. **The MANDATORY first-line badge** (`🌐 last30days v{VERSION} · synced {YYYY-MM-DD}`) at the top of every response is the LAW 2 / LAW 4 enforcement anchor. See "BADGE (MANDATORY, FIRST LINE OF OUTPUT)" in the synthesis section.
-2. **The pinned SKILL_ROOT resolution** in the engine Bash calls always points to the public plugin cache, never `~/.openclaw/` or other stale copies.
+2. **The SKILL_DIR substitution** in the engine Bash calls uses the directory of the SKILL.md the model just Read — no resolver list, no precedence walk. Whichever install the harness loaded SKILL.md from is the install whose engine runs. Aligns spec-with-code and works for any harness without enumerating its install path.
 3. **This preface** tells you plainly: do NOT improvise. Follow SKILL.md top to bottom.
 
 If you catch yourself about to write a `##` section header in a GENERAL-query body, a custom title line, a `Sources:` bullet list, a `for dir in ...` path-discovery loop, or a bare `python3 scripts/last30days.py "{TOPIC}"` engine call with no pre-flight flags — stop. Those are the exact failure modes the LAWs and this contract exist to prevent. The 10/10 beta validation from 2026-04-18 and the 0/8 public v3.0.6 regression from the same day had THE SAME MODEL and SIMILAR SKILL.md CONTENT; the delta is the three anchors this release restores. Read SKILL.md top to bottom before emitting your first response.
@@ -84,13 +114,13 @@ These anchors used to live at line 1094 of this file. Three independent Opus 4.7
 🌐 last30days v{VERSION} · synced {YYYY-MM-DD}
 ```
 
-Replace `{VERSION}` with the installed plugin version (`jq -r '.version' "$SKILL_ROOT/.claude-plugin/plugin.json"`) and `{YYYY-MM-DD}` with today's date. No other text on this line. One blank line after, then the synthesis begins.
+Replace `{VERSION}` with the installed plugin version (`jq -r '.version' "$SKILL_DIR/../../.claude-plugin/plugin.json" 2>/dev/null || awk '/^version:/{gsub(/"/,"",$2); print $2; exit}' "$SKILL_DIR/SKILL.md"`) and `{YYYY-MM-DD}` with today's date. No other text on this line. One blank line after, then the synthesis begins.
 
 **Why the badge is MANDATORY:** it is the structural anchor for the canonical output shape. Without it the model drifts into blog-post narrative format with `##` section headers and invented titles, violating LAW 2 and LAW 4. The 2026-04-18 public v3.0.6 0/8 regression produced outputs with section headers like "The headline", "Why he is everywhere", "1. gstack dominates", "The 'Homecoming' peak". Direct cause: this anchor was absent. Do NOT skip the badge. Do NOT describe it. Do NOT paraphrase it. Emit it verbatim as line 1.
 
 **Placement by query type:**
 - GENERAL / NEWS / PROMPTING / RECOMMENDATIONS: badge on line 1, blank line 2, `What I learned:` on line 3, then bold-lead-in paragraphs
-- COMPARISON: badge on line 1, blank line 2, `# {TOPIC_A} vs {TOPIC_B} [vs {TOPIC_C}]: What the Community Says (Last 30 Days)` on line 3, then Quick Verdict section
+- COMPARISON: badge on line 1, blank line 2, `# {TOPIC_A} vs {TOPIC_B} [vs {TOPIC_C}]: What the Community Says (/Last30Days)` on line 3, then Quick Verdict section
 
 ---
 
@@ -108,7 +138,7 @@ These LAWs dominate every other rule in this file. If you find yourself about to
 
 **LAW 2 - NO INVENTED TITLE LINE (with COMPARISON exception).** For QUERY_TYPE GENERAL, NEWS, PROMPTING, RECOMMENDATIONS: the first line of your synthesis body (after the badge and one blank line) is the prose label `What I learned:` on its own line. Not `What I learned about {Topic}`, not `{Topic} - Last 30 Days`, not `{Topic}: What People Are Saying`, not `# {Topic}`, not `The headline`, not `Why he is everywhere this month`. Nothing above `What I learned:` except the badge. If you are tempted to write a title or a `##`-prefixed section name, the rule is: the badge IS the title, and section headers are forbidden (see LAW 4).
 
-**COMPARISON exception:** For QUERY_TYPE=COMPARISON (topics containing `vs` or `versus`), the title `# {TOPIC_A} vs {TOPIC_B} [vs {TOPIC_C}]: What the Community Says (Last 30 Days)` is REQUIRED, not a violation. Comparison queries do NOT use the `What I learned:` prose label at all.
+**COMPARISON exception:** For QUERY_TYPE=COMPARISON (topics containing `vs` or `versus`), the title `# {TOPIC_A} vs {TOPIC_B} [vs {TOPIC_C}]: What the Community Says (/Last30Days)` is REQUIRED, not a violation. Comparison queries do NOT use the `What I learned:` prose label at all.
 
 **Global-preference override:** The skill-authored template for GENERAL / NEWS / PROMPTING / RECOMMENDATIONS queries uses `**bold**` for KEY PATTERNS items and for mid-paragraph lead-ins. Do NOT strip this bold on the grounds of a personal "no bold" memory. The skill's voice contract is the formatting authority here.
 
@@ -156,13 +186,13 @@ The self-evolving loop is the sticky use case. Every 15 tool calls Hermes pauses
 Cron-scheduled autonomous briefings are the most-cited concrete workflow. r/TunisiaTech's "Use cases of OpenClaw, Hermes Agent" thread says it plainly: "Currently I have daily cron jobs for news briefing, but I know there's much more I can do."
 ```
 
-**LAW 7 - YOU ARE THE PLANNER. `--plan` IS MANDATORY ON NAMED-ENTITY TOPICS.** If you are the reasoning model hosting this skill (Claude Code, Codex, Hermes, Gemini, or any agent runtime that invoked `/last30days`), YOU generate the JSON query plan. You do not need an API key, "LLM provider" credentials, or an external planning service - you ARE the LLM. The `--plan` flag exists precisely so a reasoning model generates its own plan upstream and passes it to the engine. The engine's internal planner and deterministic fallback are headless/cron paths only; on any reasoning-model path, bypass them by passing `--plan '$JSON'`.
+**LAW 7 - YOU ARE THE PLANNER. `--plan` IS MANDATORY ON NAMED-ENTITY TOPICS.** If you are the reasoning model hosting this skill (Claude Code, Codex, Hermes, Gemini, or any agent runtime that invoked `/last30days`), YOU generate the JSON query plan. You do not need an API key, "LLM provider" credentials, or an external planning service - you ARE the LLM. The `--plan` flag exists precisely so a reasoning model generates its own plan upstream and passes it to the engine. The engine's internal planner and deterministic fallback are headless/cron paths only; on any reasoning-model path, bypass them by passing `--plan "$QUERY_PLAN_FILE"` (the path to a tmpfile you wrote via heredoc — see Step 1 for the pattern; never inline `--plan '$JSON'`, apostrophes in search/ranking strings break shell parsing).
 
-Named-entity topics (capitalized proper nouns, product names, person names, project names, or any topic that would benefit from handle resolution in Step 0.55) REQUIRE `--plan`. Your invocation of `scripts/last30days.py` MUST contain `--plan '$JSON'`. A bare `python3 scripts/last30days.py "$TOPIC" --emit=compact` on a named-entity topic is a LAW 7 violation. Before you invoke Bash, self-check: does my command contain `--plan`? If no, STOP and generate a plan first (see Step 0.75 for the schema).
+Named-entity topics (capitalized proper nouns, product names, person names, project names, or any topic that would benefit from handle resolution in Step 0.55) REQUIRE `--plan`. Your invocation of `scripts/last30days.py` MUST contain `--plan "$QUERY_PLAN_FILE"` (or any path the engine can read). A bare `python3 scripts/last30days.py "$TOPIC" --emit=compact` on a named-entity topic is a LAW 7 violation. Before you invoke Bash, self-check: does my command contain `--plan`? If no, STOP and generate a plan first (see Step 0.75 for the schema).
 
 **Observed LAW 7 violation (2026-04-19, Hermes Agent Use Cases Run 1):** the model called the engine bare with no `--plan`, no pre-flight handle resolution. The engine emitted a stderr warning ("No --plan and no LLM provider configured. Using deterministic fallback...") which the model read as a capability constraint ("I don't have a key, I can't do LLM stuff") instead of as what it actually was: a reminder that the reasoning model skipped its own planning step. The misread came from the word "provider" - the engine uses "provider" to mean "the key for the engine's INTERNAL planner," but the model parsed it as "I need a provider to plan at all." You do not. You ARE the provider. Run 2 of the same topic (2026-04-19, framed as "best workflows") with the same model and same cache generated the plan itself via `--plan` and produced clean results - the delta was this step.
 
-**Self-check before Bash:** re-read your pending `scripts/last30days.py` command. Does it contain `--plan '$JSON'`? If no, and the topic is a named entity, STOP. Return to Step 0.75 and generate the plan. Do not interpret the word "provider" in any engine message as "you need credentials" - you are the provider.
+**Self-check before Bash:** re-read your pending `scripts/last30days.py` command. Does it contain `--plan "$QUERY_PLAN_FILE"` (or another path the engine can read)? If no, and the topic is a named entity, STOP. Return to Step 0.75 and generate the plan, then write it to a tmpfile per the Step 1 pattern. Do not interpret the word "provider" in any engine message as "you need credentials" - you are the provider.
 
 **LAW 8 - EVERY CITATION IN THE NARRATIVE IS AN INLINE MARKDOWN LINK `[name](url)`. NEVER A RAW URL STRING. NEVER A PLAIN NAME WHEN A URL IS AVAILABLE.** Applies to every query type. In the "What I learned:" narrative, in KEY PATTERNS, and in the COMPARISON body sections, every cited @handle, r/subreddit, publication, YouTube channel, TikTok creator, Instagram creator, and Polymarket market is wrapped as `[name](url)` at first mention. The URL comes from the raw research dump — every engine item carries a URL; WebSearch supplements carry URLs in their own output. Claude Code renders `[text](url)` as blue CMD-clickable text; the URL is hidden in the rendering, only the link text shows. The stats footer (emoji-tree block) is engine-emitted per LAW 5 and passes through verbatim — do NOT reformat its links yourself.
 
@@ -213,7 +243,7 @@ If your Bash call to `last30days.py` does NOT include the FULL pre-flight checkl
 
 ---
 
-# last30days v3.0.1: Research Any Topic from the Last 30 Days
+# last30days v3.3.1: Research Any Topic from the Last 30 Days
 
 > **Permissions overview:** Reads public web/platform data and optionally saves research briefings to `LAST30DAYS_MEMORY_DIR` (defaults to `~/Documents/Last30Days`). X/Twitter search uses optional user-provided tokens (AUTH_TOKEN/CT0 env vars). Bluesky search uses optional app password (BSKY_HANDLE/BSKY_APP_PASSWORD env vars - create at bsky.app/settings/app-passwords). All credential usage and data writes are documented in the [Security & Permissions](#security--permissions) section.
 
@@ -297,14 +327,14 @@ Common patterns:
 
 - Always active: Reddit, Hacker News, Polymarket
 - If gh CLI is installed (check `which gh`): add GitHub
-- If AUTH_TOKEN/CT0 or XAI_API_KEY or FROM_BROWSER is set: add X
+- If digg-pp-cli is installed (check `which digg-pp-cli`): add Digg
+- If AUTH_TOKEN/CT0 or XAI_API_KEY or FROM_BROWSER is set, or xurl CLI is installed and authenticated: add X
 - If yt-dlp is installed (check `which yt-dlp`): add YouTube
-- If SCRAPECREATORS_API_KEY is set and INCLUDE_SOURCES contains tiktok: add TikTok
-- If SCRAPECREATORS_API_KEY is set and INCLUDE_SOURCES contains instagram: add Instagram
-- If SCRAPECREATORS_API_KEY is set and INCLUDE_SOURCES contains threads: add Threads
-- If SCRAPECREATORS_API_KEY is set and INCLUDE_SOURCES contains pinterest: add Pinterest
+- If SCRAPECREATORS_API_KEY is set: add TikTok, Instagram, Threads (suppress any of these via EXCLUDE_SOURCES)
+- If SCRAPECREATORS_API_KEY is set and the user explicitly requested pinterest for this query (e.g. via `--search=pinterest`): add Pinterest
 - If BSKY_HANDLE and BSKY_APP_PASSWORD are set: add Bluesky
-- If OPENROUTER_API_KEY is set: add Perplexity
+- If OPENROUTER_API_KEY is set and INCLUDE_SOURCES contains perplexity: add Perplexity
+- If EXCLUDE_SOURCES is set (comma-separated, case-insensitive): drop any matching source from the list above before displaying
 
 Then display (use "and more" if 5+ sources, otherwise list all with Oxford comma):
 
@@ -550,28 +580,93 @@ Generated: {date} | Sources: Reddit, X, Bluesky, YouTube, TikTok, HN, Polymarket
 
 ## If QUERY_TYPE = COMPARISON
 
-When the user asks "X vs Y", run ONE research pass with a comparison-optimized plan that covers both entities AND their rivalry. This replaces the old 3-pass approach (which took 13+ minutes and produced tangential content).
+When the user asks "X vs Y" (or "X vs Y vs Z"), the engine fans out N full `pipeline.run()` calls in parallel — one per entity — each with its own Step 0.55-grade targeting. This restored the old N-pass architecture (reverted the one-pass latency optimization that removed per-entity depth); parallel execution keeps wall clock ≈ a single pass.
 
-**IMPORTANT: Include BOTH X handles (`--x-handle={TOPIC_A_HANDLE} --x-related={TOPIC_B_HANDLE},{COMPANY_HANDLES},{COMMENTATOR_HANDLES}`), `--subreddits={RESOLVED_SUBREDDITS}`, `--tiktok-hashtags={RESOLVED_HASHTAGS}`, `--tiktok-creators={RESOLVED_TIKTOK_CREATORS}`, and `--ig-creators={RESOLVED_IG_CREATORS}` from Step 0.55. Omit any flag where the value was not resolved (empty).**
+**MANDATORY per-entity resolution.** For each entity, resolve the full Step 0.55 stack (X handle, subreddits, GitHub user/repos, news context). Then assemble a `--competitors-plan` JSON mapping each entity to its targeting, and invoke the engine ONCE with the vs-topic string.
 
-**Single pass with entity-aware subqueries:**
+**Output shape per run:**
+- Main topic saves to `{main-slug}-raw.md`.
+- Each peer saves to `{peer-slug}-raw.md`.
+- Stdout shows a merged comparison with the `## Head-to-Head` scaffold + per-entity Resolved Entities block.
+
+**Invocation:**
 ```bash
-"${LAST30DAYS_PYTHON}" "${SKILL_ROOT}/scripts/last30days.py" "{TOPIC_A} vs {TOPIC_B}" --emit=compact --save-dir="${LAST30DAYS_MEMORY_DIR}" --save-suffix=v3 --plan 'COMPARISON_PLAN_JSON' --x-handle={TOPIC_A_HANDLE} --x-related={TOPIC_B_HANDLE},{COMPANY_A_HANDLE},{COMPANY_B_HANDLE},{COMMENTATOR_HANDLES} --subreddits={RESOLVED_SUBREDDITS} --tiktok-hashtags={RESOLVED_HASHTAGS} --tiktok-creators={RESOLVED_TIKTOK_CREATORS} --ig-creators={RESOLVED_IG_CREATORS}
+# SKILL_DIR = absolute path of the directory containing THIS SKILL.md you just Read.
+# Substitute the actual path below — your harness told you where this file lives via
+# the Read tool result. Examples:
+#   Read ~/.claude/skills/last30days/SKILL.md      → SKILL_DIR=$HOME/.claude/skills/last30days
+#   Read ~/.codex/skills/last30days/SKILL.md       → SKILL_DIR=$HOME/.codex/skills/last30days
+#   Read ~/.claude/plugins/cache/last30days-skill/last30days/3.3.1/skills/last30days/SKILL.md
+#     → SKILL_DIR=$HOME/.claude/plugins/cache/last30days-skill/last30days/3.3.1/skills/last30days
+# scripts/last30days.py is always a direct child of SKILL_DIR (every install layout
+# packages SKILL.md and scripts/ as siblings).
+SKILL_DIR="<absolute path of the directory containing the SKILL.md you Read>"
+
+if [ ! -f "$SKILL_DIR/scripts/last30days.py" ]; then
+  echo "ERROR: scripts/last30days.py not found under SKILL_DIR=$SKILL_DIR" >&2
+  echo "Re-check the directory of the SKILL.md you Read and substitute it as SKILL_DIR above." >&2
+  exit 1
+fi
+
+# Write the per-entity plan to a tmpfile and pass the path to the engine.
+# The engine's parse_competitors_plan() reads file paths transparently. This
+# avoids the inline-single-quoted-JSON apostrophe trap (resolved context
+# strings like "people's choice" or "McDonald's" otherwise close the outer
+# single-quote and break shell parsing before the engine is even invoked).
+# Trailing XXXXXX (no .json suffix) so BSD/macOS mktemp works the same as
+# GNU; BSD only substitutes X's at the end of the template.
+COMPETITORS_PLAN_FILE=$(mktemp "${TMPDIR:-/tmp}/last30days-competitors.XXXXXX")
+trap 'rm -f "$COMPETITORS_PLAN_FILE"' EXIT
+cat > "$COMPETITORS_PLAN_FILE" <<'PLAN_EOF'
+{
+  "{TOPIC_B}": {"x_handle":"{TOPIC_B_HANDLE}","subreddits":["{TOPIC_B_SUB_1}","{TOPIC_B_SUB_2}"],"github_user":"{TOPIC_B_GH}","context":"{TOPIC_B_CONTEXT}"},
+  "{TOPIC_C}": {"x_handle":"{TOPIC_C_HANDLE}","subreddits":["{TOPIC_C_SUB_1}"],"github_user":"{TOPIC_C_GH}","context":"{TOPIC_C_CONTEXT}"}
+}
+PLAN_EOF
+
+"${LAST30DAYS_PYTHON}" "${SKILL_DIR}/scripts/last30days.py" "{TOPIC_A} vs {TOPIC_B} vs {TOPIC_C}" \
+  --emit=compact \
+  --save-dir="${LAST30DAYS_MEMORY_DIR}" \
+  --save-suffix=v3 \
+  --x-handle={TOPIC_A_HANDLE} \
+  --subreddits={TOPIC_A_SUBS} \
+  --competitors-plan "$COMPETITORS_PLAN_FILE"
 ```
 
-**The `--plan` JSON for comparisons should include 3-4 subqueries:**
-1. **Head-to-head:** `"{TOPIC_A} vs {TOPIC_B}"` - catches rivalry content, direct comparisons
-2. **Entity A news:** `"{TOPIC_A} news {MONTH} {YEAR}"` - catches entity-specific developments
-3. **Entity B news:** `"{TOPIC_B} news {MONTH} {YEAR}"` - catches entity-specific developments
-4. (Optional) **Domain context:** `"{COMPANY_A} {COMPANY_B} {DOMAIN} news"` - catches industry context (e.g., "OpenAI Anthropic AI news")
+**The quoted heredoc marker `'PLAN_EOF'` is load-bearing** — quoting suppresses shell interpolation so apostrophes, `$`, backticks, etc. pass through verbatim. If you ever switch to an unquoted `<<PLAN_EOF`, every variable reference and apostrophe inside the JSON becomes a parse hazard.
 
-ALL subqueries include ALL sources. The fusion engine handles deduplication across subqueries. **At least one subquery MUST include YouTube-specific search terms** (e.g., "{PERSON} interview 2026", "{PRODUCT_A} vs {PRODUCT_B} review") to ensure YouTube content is found. Without YouTube-specific terms, the engine may only find 0-1 videos for comparison queries.
+Topic A (the main topic, first in the vs-string) uses outer `--x-handle`, `--x-related`, `--subreddits`, `--github-user`, `--github-repo`, `--tiktok-*`, `--ig-creators` as usual. Topics B and C get their targeting from `--competitors-plan` entries (keyed by entity name, case-insensitive).
 
-Then do WebSearch for: `{TOPIC_A} vs {TOPIC_B} comparison {YEAR}` and `{TOPIC_A} vs {TOPIC_B} which is better` and `{COMPANY_A} vs {COMPANY_B} news {MONTH} {YEAR}`.
+**Step 0.55 for N entities.** The same pre-research protocol that applies to a single-entity topic applies to EACH entity in a vs-run. For N=3, that means 3 WebSearches for X handles, 3 for subreddits, 3 for GitHub, 3 for news context — or equivalent batched queries. A `## Resolved Entities` block with dashes for any entity means you skipped Step 0.55 for that one. Re-run with a corrected plan.
+
+**Then do WebSearch supplements** for: `{TOPIC_A} vs {TOPIC_B} comparison {YEAR}` and `{TOPIC_A} vs {TOPIC_B} which is better` — these catch rivalry articles that per-entity passes might not surface.
 
 **Skip the normal Step 1 below** - go directly to the comparison synthesis format (see "If QUERY_TYPE = COMPARISON" in the synthesis section).
 
-**COMPARISON TABLE SCAFFOLD (engine-emitted, pass through verbatim):** For comparison topics, the engine's compact output includes a `## Head-to-Head Comparison` block with an empty markdown table (columns = entities, rows = axes like "Core pitch", "Who it's for", "Community stance", "Trajectory") plus a "Choose X if / Choose Y if" prose block. Your synthesis MUST include this block verbatim with filled cells, positioned between the narrative and the emoji-tree footer. Keep each cell to 5-15 words. Use ' - ' (hyphen with spaces) not em-dashes inside cells. The block is the canonical comparison output shape - do not invent your own table structure.
+**COMPARISON TABLE SCAFFOLD (engine-emitted, pass through verbatim):** For comparison topics, the engine's compact output includes a `## Head-to-Head` block with an empty markdown table (columns = entities, rows = axes like "What it is", "Community sentiment", "Trajectory"). Your synthesis MUST include this block verbatim with filled cells, positioned between the narrative and the emoji-tree footer. Keep each cell to 5-15 words. Use ' - ' (hyphen with spaces) not em-dashes inside cells.
+
+### Competitor mode (`--competitors`)
+
+`--competitors` is a SKILL.md-level shortcut for vs-mode with auto-discovery. The engine flag itself just signals intent; YOU (the hosting reasoning model) do the discovery and Step 0.55 via your own WebSearch tool, then invoke the vs-topic path above.
+
+**The four-step protocol:**
+1. **Discover peers** via WebSearch: `"{topic} competitors"` / `"{topic} alternatives"`. Pick N=2 by default (match the flag's default), N=argument value if the user passed `--competitors=N`.
+2. **Run Step 0.55 for the main topic AND each peer** — same protocol you use for a single-entity topic, just N times. X handle, subreddits, GitHub, news context, per entity.
+3. **Build the vs-topic string**: `"{main} vs {peer1} vs {peer2}"`.
+4. **Invoke the engine** with the vs-topic, `--competitors-plan` JSON covering both peers (and the main topic if you want to override the outer flags), and the outer `--x-handle`/`--subreddits`/`--github-*` for the main topic.
+
+**Flag surface (engine):**
+- `--competitors` (bare) - signals the hosting model to discover 2 peers (3-way total).
+- `--competitors=N` - N peers (1..6; out-of-range clamps with stderr warning).
+- `--competitors-list="A,B,C"` - minimum escape hatch; names only, no per-entity targeting. Peer sub-runs fall back to planner defaults (visibly thinner data).
+- `--competitors-plan '{entity: {x_handle, subreddits, github_user, github_repos, context}}'` - full per-entity targeting; implies vs-mode; preferred.
+- `--polymarket-keywords "kw1,kw2"` - disambiguate Polymarket for ambiguous single-token topics ("Warriors" → `nba,gsw,golden-state`).
+
+**Why --competitors-plan over --competitors-list:** without per-entity handles/subs, peer sub-runs run with deterministic single-word planner queries and produce visibly thinner evidence than the main topic. The Resolved Entities block in stdout makes the gap visible — dashes for a peer = you skipped its Step 0.55.
+
+**Engine-internal auto-resolve (headless fallback):** if the engine detects BRAVE_API_KEY / EXA_API_KEY / SERPER_API_KEY / PARALLEL_API_KEY / OPENROUTER_API_KEY, it runs its own per-entity `resolve.auto_resolve()` before each sub-run. The hosting-model path does NOT need those keys — you are the WebSearch. The engine's auto-resolve is the cron/CI fallback for when no reasoning model is driving.
+
+**Output:** one `{slug}-raw.md` per entity in `--save-dir` plus the merged comparison on stdout. Synthesis contract identical to the vs-mode protocol above.
 
 ---
 
@@ -595,6 +690,43 @@ WebSearch("{TOPIC} news {CURRENT_MONTH} {CURRENT_YEAR}")
 The first search finds subreddits. The second gives you current events context (which helps you generate better subqueries in Step 0.75) and may surface YouTube channels or creators organically.
 
 Extract 3-5 subreddit names from the results. Store as `RESOLVED_SUBREDDITS` (comma-separated, no r/ prefix).
+
+**2a. Category-peer expansion (MANDATORY for product topics).** If the topic is a product in a recognizable category (AI image generation, AI video generation, AI coding agents, AI music, AI chat models, SaaS screen recording, prediction markets, etc.), the brand-specific subreddits that WebSearch returned are INSUFFICIENT. Add 2-3 peer subreddits from the category. Peer subs are where cross-product technique discussion actually lives. Missing them is the 2026-04-22 `GPT Image 2` failure mode: the model resolved `r/OpenAI, r/ChatGPT, r/singularity, r/ChatGPTpromptengineering` (all OpenAI-brand) and missed `r/StableDiffusion, r/midjourney, r/dalle2, r/aiArt` where prompting techniques are actually shared. The user had to manually prompt "check image generation reddits too" to get a usable run.
+
+Canonical category peers (single source of truth; `scripts/lib/categories.py` mirrors this for the `--auto-resolve` engine path):
+
+| Category | Trigger keywords | Peer subs (priority order) |
+|----------|------------------|---------------------------|
+| `ai_image_generation` | image generation, text to image, GPT Image, Nano Banana, Midjourney, Stable Diffusion, DALL-E, Flux.1, Imagen, Seedance, Ideogram, Recraft | `StableDiffusion, midjourney, dalle2, aiArt, PromptEngineering, MediaSynthesis` |
+| `ai_video_generation` | video generation, text to video, Sora, Veo 3, Runway Gen, Kling, Pika Labs, Luma Dream Machine, Hailuo | `aivideo, StableDiffusion, runwayml, singularity, MediaSynthesis` |
+| `ai_music_generation` | music generation, ai music, Suno, Udio, Riffusion, Stable Audio | `SunoAI, udiomusic, aimusic, artificial` |
+| `ai_coding_agent` | Claude Code, Cursor IDE, GitHub Copilot, Windsurf, Aider, Cline, OpenClaw, Hermes Agent, Continue.dev, Codeium, Devin | `ChatGPTCoding, LocalLLaMA, singularity, PromptEngineering` |
+| `ai_agent_framework` | agent framework, LangChain, LangGraph, CrewAI, AutoGen, LlamaIndex, DSPy, smolagents | `LangChain, LocalLLaMA, AI_Agents, MachineLearning` |
+| `ai_chat_model` | GPT-5/4, Claude Opus/Sonnet/Haiku, Gemini Pro/Flash, Llama 3/4, DeepSeek, Qwen, Mistral Large, Grok | `LocalLLaMA, ChatGPT, ClaudeAI, singularity, artificial` |
+| `saas_screen_recording` | screen recording, screen recorder, Loom video, Tella screen, Vidyard | `SaaS, screenrecording, productivity, Entrepreneur` |
+| `saas_productivity` | Notion app, Obsidian, Linear app, Asana, ClickUp, productivity app | `productivity, SaaS, ObsidianMD, Notion` |
+| `prediction_markets` | Polymarket, Kalshi, prediction market, event contracts, Manifold Markets | `Polymarket, Kalshi, predictionmarkets` |
+| `crypto_defi` | DeFi protocol, yield farming, liquidity pool, stablecoin, layer 2, L2 rollup | `defi, ethfinance, CryptoCurrency, ethereum` |
+
+**Merging rule.** Start with WebSearch-returned subs. Append 2-3 category peers in the priority order shown. Dedupe case-insensitively (don't list `midjourney` twice if WebSearch already returned it). Cap total at 10: if adding all peers would exceed the cap, keep every WebSearch-returned sub (they are the freshest signal) and drop peers from the end of the priority list.
+
+**Extrapolation.** If the topic is a product in a category NOT listed in the table (new AI tool, niche SaaS), use the same spirit: pick the 2-3 most active cross-product communities where technique discussion happens. A new image-gen tool still gets `r/StableDiffusion, r/midjourney, r/aiArt`. A new code editor still gets `r/ChatGPTCoding, r/LocalLLaMA`.
+
+**Worked example — the failing query.** Topic: `Prompting GPT Image 2`.
+
+Before (the 2026-04-22 failure mode):
+```
+Resolved:
+- Reddit: r/OpenAI, r/ChatGPT, r/singularity, r/ChatGPTpromptengineering, r/artificial
+```
+
+After (with category-peer expansion):
+```
+Resolved:
+- Reddit: r/OpenAI, r/ChatGPT, r/singularity, r/ChatGPTpromptengineering, r/StableDiffusion, r/midjourney, r/dalle2, r/aiArt (+ ai_image_generation peers)
+```
+
+The parenthetical `(+ ai_image_generation peers)` is the observable contract of the new Resolved block format. See Step 0.55 self-check below.
 
 **3. TikTok hashtags + creators** - **INFER these from your topic knowledge. Do NOT WebSearch for "{PERSON} TikTok account" - most people/CEOs don't have TikTok, and the search is wasted.**
 
@@ -658,17 +790,19 @@ Passing the resolved block visibly (per-entity, all 4 types each) is the observa
 
 **If you can't infer targeting for a platform, skip that flag -- the Python engine will fall back to keyword search.**
 
+**Step 0.55 self-check: category-peer coverage.** Before emitting the Resolved block, re-read your resolved subreddit list. Does the topic match any category in the Section 2a table (or fit the spirit of one — AI image gen, AI coding, AI music, etc.)? If YES: does your list include AT LEAST 2 peer subs from that category? If NO, widen the list NOW — do not run the engine yet. The observable contract is the `(+ {category_id} peers)` annotation on the Reddit line in the Resolved block. Its absence on a product-in-a-known-category topic is a Step 0.55 regression — the named 2026-04-22 failure mode. Person topics, music artists, news stories, and topics outside any category are exempt; omit the annotation.
+
 **After resolving all handles and communities, display what you found before moving on.** This shows the user that intelligent pre-research happened:
 
 ```
 Resolved:
 - X: @{HANDLE} (+ @{COMPANY}, @{COMMENTATOR})
-- Reddit: r/{sub1}, r/{sub2}, r/{sub3}
+- Reddit: r/{sub1}, r/{sub2}, r/{sub3}, r/{peer1}, r/{peer2} (+ {category_id} peers)
 - TikTok: #{hashtag1}, #{hashtag2}
 - YouTube: {query1}, {query2}
 ```
 
-Only show lines for platforms where something was resolved. Skip empty lines. This display replaces the old "Parsed intent" block with something more useful.
+Only show lines for platforms where something was resolved. Skip empty lines. On the Reddit line, the trailing `(+ {category_id} peers)` annotation appears when Step 0.55 Section 2a added category-peer subs. Omit the annotation when the topic had no matching category. This display replaces the old "Parsed intent" block with something more useful.
 
 ---
 
@@ -732,7 +866,7 @@ Only show lines for platforms where something was resolved. Skip empty lines. Th
 - For how_to: prioritize YouTube (tutorials) and Reddit (guides)
 - Primary subquery weight = 1.0, secondary = 0.6-0.8, peripheral = 0.3-0.5
 
-**Available sources (include ALL in primary subquery):** reddit, x, youtube, tiktok, instagram, hackernews, polymarket. Optional: bluesky, truthsocial, threads, pinterest, grounding (web search - only if user has Brave/Exa/Serper key)
+**Available sources (include ALL in primary subquery):** reddit, x, youtube, tiktok, instagram, hackernews, polymarket. Optional: bluesky, truthsocial, threads, pinterest, grounding (web search - only if user has Brave/Exa/Serper key), digg (Digg clusters - only if `digg-pp-cli` is on PATH)
 
 **Intent → freshness_mode mapping:**
 - breaking_news, prediction → `strict_recent`
@@ -775,34 +909,45 @@ Store your plan as `QUERY_PLAN_JSON` - you'll pass it to the script in the next 
 **IMPORTANT: Include `--x-handle={RESOLVED_HANDLE}` in the command. For comparison mode: Pass `--x-handle={TOPIC_A_HANDLE}` to the first pass, `--x-handle={TOPIC_B_HANDLE}` to the second pass, and both to the head-to-head pass. Also include `--subreddits={RESOLVED_SUBREDDITS}`, `--tiktok-hashtags={RESOLVED_HASHTAGS}`, `--tiktok-creators={RESOLVED_TIKTOK_CREATORS}`, and `--ig-creators={RESOLVED_IG_CREATORS}` from Step 0.55. Omit any flag where the value was not resolved (empty).**
 
 ```bash
-# PIN SKILL_ROOT to the public plugin cache (highest-version dir wins on upgrade).
-# DO NOT write your own path-discovery loop. The 2026-04-18 Peter Steinberger run 1
-# regression was caused by a custom discovery loop landing on ~/.openclaw/skills/last30days/
-# (a stale copy from a private-repo sync pattern). That path contains a pre-plan-007
-# engine and produces non-canonical output. This pinned resolution ignores every stale
-# copy (~/.openclaw/, ~/.agents/, ~/.codex/) and picks the plugin cache exclusively.
-SKILL_ROOT="$(ls -d "$HOME/.claude/plugins/cache/last30days-skill/last30days/"*/ 2>/dev/null | sort -V | tail -1)"
-SKILL_ROOT="${SKILL_ROOT%/}"
+# SKILL_DIR = absolute path of the directory containing THIS SKILL.md you just Read.
+# Substitute the actual path below — your harness told you where this file lives via
+# the Read tool result. Examples:
+#   Read ~/.claude/skills/last30days/SKILL.md      → SKILL_DIR=$HOME/.claude/skills/last30days
+#   Read ~/.codex/skills/last30days/SKILL.md       → SKILL_DIR=$HOME/.codex/skills/last30days
+#   Read ~/.claude/plugins/cache/last30days-skill/last30days/3.3.1/skills/last30days/SKILL.md
+#     → SKILL_DIR=$HOME/.claude/plugins/cache/last30days-skill/last30days/3.3.1/skills/last30days
+# scripts/last30days.py is always a direct child of SKILL_DIR (every install layout
+# packages SKILL.md and scripts/ as siblings).
+SKILL_DIR="<absolute path of the directory containing the SKILL.md you Read>"
 
-# Fallback for repo checkout / Gemini / Codex hosts where the plugin cache does not exist.
-# Only runs if the public plugin cache is missing entirely.
-if [ -z "$SKILL_ROOT" ] || [ ! -f "$SKILL_ROOT/scripts/last30days.py" ]; then
-  for dir in "." "${CLAUDE_PLUGIN_ROOT:-}" "${GEMINI_EXTENSION_DIR:-}"; do
-    [ -n "$dir" ] && [ -f "$dir/scripts/last30days.py" ] && SKILL_ROOT="$dir" && break
-  done
-fi
-
-if [ -z "${SKILL_ROOT:-}" ] || [ ! -f "$SKILL_ROOT/scripts/last30days.py" ]; then
-  echo "ERROR: Could not find scripts/last30days.py in public plugin cache or repo checkout" >&2
-  echo "Expected: $HOME/.claude/plugins/cache/last30days-skill/last30days/{VERSION}/scripts/last30days.py" >&2
+if [ ! -f "$SKILL_DIR/scripts/last30days.py" ]; then
+  echo "ERROR: scripts/last30days.py not found under SKILL_DIR=$SKILL_DIR" >&2
+  echo "Re-check the directory of the SKILL.md you Read and substitute it as SKILL_DIR above." >&2
   exit 1
 fi
 
-"${LAST30DAYS_PYTHON}" "${SKILL_ROOT}/scripts/last30days.py" $ARGUMENTS --emit=compact --save-dir="${LAST30DAYS_MEMORY_DIR}" --save-suffix=v3
+"${LAST30DAYS_PYTHON}" "${SKILL_DIR}/scripts/last30days.py" $ARGUMENTS --emit=compact --save-dir="${LAST30DAYS_MEMORY_DIR}" --save-suffix=v3
 ```
 
-**If you ran Steps 0.55 and 0.75 (agent planning), add these flags:**
-- `--plan 'QUERY_PLAN_JSON'` (replace with actual JSON from Step 0.75)
+**If you ran Steps 0.55 and 0.75 (agent planning), pass the plan via a tmpfile and add the targeting flags:**
+
+```bash
+# Write QUERY_PLAN_JSON to a tmpfile before the engine invocation above.
+# parse_plan() reads file paths transparently; this avoids inline-JSON
+# shell-quoting hazards (apostrophes in search_query / ranking_query
+# strings break single-quoted command-line JSON). Trailing XXXXXX (no
+# .json suffix) for BSD/macOS portability — BSD mktemp only substitutes
+# X's at the end of the template.
+QUERY_PLAN_FILE=$(mktemp "${TMPDIR:-/tmp}/last30days-plan.XXXXXX")
+trap 'rm -f "$QUERY_PLAN_FILE"' EXIT
+cat > "$QUERY_PLAN_FILE" <<'PLAN_EOF'
+{QUERY_PLAN_JSON_FROM_STEP_0.75}
+PLAN_EOF
+```
+
+Then add to the engine command:
+
+- `--plan "$QUERY_PLAN_FILE"` (path to the file you just wrote)
 - `--x-handle={RESOLVED_HANDLE}` (from Step 0.5)
 - `--subreddits={RESOLVED_SUBREDDITS}` (from Step 0.55)
 - `--tiktok-hashtags={RESOLVED_HASHTAGS}` (from Step 0.55)
@@ -1113,7 +1258,7 @@ Voice contract LAWs 1, 3, 5 apply to comparisons unchanged (no `Sources:` block,
 ```
 🌐 last30days v{VERSION} · synced {YYYY-MM-DD}
 
-# {TOPIC_A} vs {TOPIC_B} [vs {TOPIC_C}]: What the Community Says (Last 30 Days)
+# {TOPIC_A} vs {TOPIC_B} [vs {TOPIC_C}]: What the Community Says (/Last30Days)
 
 ## Quick Verdict
 
@@ -1405,6 +1550,33 @@ Close with `I have all the links to the {N} {source list} I pulled from. Just as
 
 ---
 
+## SHAREABLE HTML BRIEF (when the user asked for one)
+
+**This section fires if EITHER trigger is true:**
+
+- `$ARGUMENTS` contains `--emit=html`, `--emit:html`, or `--html` as a flag
+- The user's natural-language request asks for an HTML brief, shareable doc, or file for sharing (Slack, email, Notion, "export as HTML", etc). Use your judgment for phrasing variants.
+
+**If neither trigger fires, skip this entire section and proceed to WAIT FOR USER'S RESPONSE.** No HTML save flow, no reference read needed.
+
+**When triggered, you MUST:**
+
+- Read `references/save-html-brief.md` BEFORE proceeding to WAIT FOR USER'S RESPONSE
+- Follow that file's instructions exactly - it is the canonical source for the save flow
+- Append the confirmation line (`📎 Shareable brief saved to <path>`) to your already-emitted chat response
+
+**You MUST NOT:**
+
+- Improvise the HTML save flow from memory or from instructions you've seen before
+- Skip the reference read because the steps "look familiar"
+- Save to a different path than the reference specifies
+- Add data quality warnings, debug headers, or safety notes to the saved HTML
+- Re-research the topic for the HTML render - the engine cache covers the second invocation
+
+**Why the directive is forceful:** the reference file is the only source of truth for the save flow. Skipping it produces broken artifacts - wrong path conventions, missing synthesis content, leaked engine debug output, or warnings that don't belong in shareable docs.
+
+---
+
 ## WAIT FOR USER'S RESPONSE
 
 **STOP and wait** for the user to respond. Do NOT call any tools after displaying the invitation. Do NOT append a `Sources:` section (see override above - WebSearch's mandate does not apply here). The research script already saved raw data to `LAST30DAYS_MEMORY_DIR` (defaults to `~/Documents/Last30Days`) via `--save-dir`.
@@ -1512,11 +1684,11 @@ Want another prompt? Just tell me what you're creating next.
 **What this skill does:**
 - Sends search queries to ScrapeCreators API (`api.scrapecreators.com`) for TikTok and Instagram search, and as a Reddit backup when public Reddit is unavailable (requires SCRAPECREATORS_API_KEY)
 - Legacy: Sends search queries to OpenAI's Responses API (`api.openai.com`) for Reddit discovery (fallback if no SCRAPECREATORS_API_KEY)
-- Sends search queries to Twitter's GraphQL API (via optional user-provided AUTH_TOKEN/CT0 env vars - no browser session access) or xAI's API (`api.x.ai`) for X search
+- Sends search queries to Twitter's GraphQL API (via optional user-provided AUTH_TOKEN/CT0 env vars - no browser session access), xAI's API (`api.x.ai`), or the official X API v2 via xurl CLI (OAuth2, auto-detected when installed and authenticated) for X search
 - Sends search queries to Algolia HN Search API (`hn.algolia.com`) for Hacker News story and comment discovery (free, no auth)
 - Sends search queries to Polymarket Gamma API (`gamma-api.polymarket.com`) for prediction market discovery (free, no auth)
 - Runs `yt-dlp` locally for YouTube search and transcript extraction (no API key, public data)
-- Sends search queries to ScrapeCreators API (`api.scrapecreators.com`) for TikTok and Instagram search, transcript/caption extraction (PAYG after 10,000 free API calls)
+- Sends search queries to ScrapeCreators API (`api.scrapecreators.com`) for TikTok and Instagram search, transcript/caption extraction (PAYG after 100 free credits)
 - Optionally sends search queries to Brave Search API, Parallel AI API, or OpenRouter API for web search
 - Fetches public Reddit thread data from `reddit.com` for engagement metrics
 - Stores research findings in local SQLite database (watchlist mode only)
@@ -1529,7 +1701,7 @@ Want another prompt? Just tell me what you're creating next.
 - Does not log, cache, or write API keys to output files
 - Does not send data to any endpoint not listed above
 - Hacker News and Polymarket sources are always available (no API key, no binary dependency)
-- TikTok and Instagram sources require SCRAPECREATORS_API_KEY (10,000 free API calls, then PAYG). Reddit uses ScrapeCreators only as a backup when public Reddit is unavailable.
+- TikTok and Instagram sources require SCRAPECREATORS_API_KEY (100 free credits one-time, then PAYG). Reddit uses ScrapeCreators only as a backup when public Reddit is unavailable.
 - Can be invoked autonomously by agents via the Skill tool (runs inline, not forked); pass `--agent` for non-interactive report output
 
 **Bundled scripts:** `scripts/last30days.py` (main research engine), `scripts/lib/` (search, enrichment, rendering modules), `scripts/lib/vendor/bird-search/` (vendored X search client, MIT licensed)

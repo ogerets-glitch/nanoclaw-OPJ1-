@@ -13,8 +13,11 @@ import time
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+SKILL_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON = sys.executable
+ENGINE = SKILL_ROOT / "scripts" / "last30days.py"
+EVALUATOR = SKILL_ROOT / "scripts" / "evaluate_search_quality.py"
 
 SMOKE_TOPIC = "openclaw skills"
 SMOKE_CASES = [
@@ -56,7 +59,16 @@ def verify_unit() -> dict[str, str]:
             "-m",
             "py_compile",
             *subprocess.run(
-                ["rg", "--files", "scripts", "tests", "-g", "*.py", "-g", "!scripts/lib/vendor/**"],
+                [
+                    "rg",
+                    "--files",
+                    "skills/last30days/scripts",
+                    "tests",
+                    "-g",
+                    "*.py",
+                    "-g",
+                    "!skills/last30days/scripts/lib/vendor/**",
+                ],
                 cwd=REPO_ROOT,
                 text=True,
                 capture_output=True,
@@ -69,7 +81,7 @@ def verify_unit() -> dict[str, str]:
 
 
 def verify_diagnose() -> dict[str, object]:
-    result = run_command([PYTHON, "scripts/last30days.py", "--diagnose"], timeout=120)
+    result = run_command([PYTHON, str(ENGINE), "--diagnose"], timeout=120)
     return json.loads(result.stdout)
 
 
@@ -80,7 +92,7 @@ def verify_smoke() -> list[dict[str, object]]:
         env["LAST30DAYS_REASONING_PROVIDER"] = provider
         start = time.time()
         result = run_command(
-            [PYTHON, "scripts/last30days.py", SMOKE_TOPIC, "--emit=json", *extra],
+            [PYTHON, str(ENGINE), SMOKE_TOPIC, "--emit=json", *extra],
             env=env,
             timeout=240,
         )
@@ -106,7 +118,7 @@ def verify_latency() -> dict[str, dict[str, object]]:
         for topic in LATENCY_TOPICS:
             start = time.time()
             run_command(
-                [PYTHON, "scripts/last30days.py", topic, "--emit=json", *extra],
+                [PYTHON, str(ENGINE), topic, "--emit=json", *extra],
                 timeout=300,
             )
             timings.append(time.time() - start)
@@ -129,7 +141,7 @@ def verify_eval(
 ) -> dict[str, object]:
     cmd = [
         PYTHON,
-        "scripts/evaluate_search_quality.py",
+        str(EVALUATOR),
         f"--baseline={baseline}",
         f"--candidate={candidate}",
         f"--output-dir={output_dir}",

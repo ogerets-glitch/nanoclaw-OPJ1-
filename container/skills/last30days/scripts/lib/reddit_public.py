@@ -1,9 +1,16 @@
-"""Standalone Reddit public JSON search module.
+"""Reddit public ``.json`` search module (demoted to keyless Tier 0).
 
-Searches Reddit using the free public JSON endpoints (no API key required).
-Promoted from last-resort fallback to robust primary free path.
+Reddit's public ``.json`` endpoints now return HTTP 403 from most contexts
+(shreddit anti-bot), so this is no longer the primary free path. The keyless
+pipeline (see reddit_keyless.py) still calls ``search`` as a cheap one-shot
+Tier 0 attempt — a residential machine may occasionally get a 200 — before
+falling through to RSS discovery (reddit_rss.py) and shreddit comment
+enrichment (reddit_shreddit.py).
 
-Endpoints:
+``search_reddit_public`` is retained as a compatibility shim that delegates to
+the keyless pipeline, so existing callers (pipeline.py) need no change.
+
+Endpoints (Tier 0):
 - Global: https://www.reddit.com/search.json?q={query}&sort=relevance&t=month&limit={limit}
 - Subreddit: https://www.reddit.com/r/{sub}/search.json?q={query}&restrict_sr=on&sort=relevance&t=month
 
@@ -11,30 +18,27 @@ Handles 429 rate limits with exponential backoff, HTML anti-bot responses,
 network timeouts, and missing subreddits.
 """
 
+import gzip
 import json
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Any, Dict, List, Optional
 
 
-USER_AGENT = "last30days/3.0 (research tool)"
+USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36"
+)
 
 # Depth-aware limits for thread counts
 DEPTH_LIMITS = {
     "quick": 10,
     "default": 25,
     "deep": 50,
-}
-
-# How many top posts to enrich with comments, by depth
-ENRICH_LIMITS = {
-    "quick": 3,
-    "default": 5,
-    "deep": 8,
 }
 
 MAX_RETRIES = 3
@@ -60,6 +64,9 @@ def _fetch_json(url: str, timeout: int = 15) -> Optional[Dict[str, Any]]:
     headers = {
         "User-Agent": USER_AGENT,
         "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate",
+        "Connection": "keep-alive",
     }
     req = urllib.request.Request(url, headers=headers)
 
@@ -71,7 +78,10 @@ def _fetch_json(url: str, timeout: int = 15) -> Optional[Dict[str, Any]]:
                     _log(f"Anti-bot HTML response (Content-Type: {content_type})")
                     return None
 
-                body = resp.read().decode("utf-8")
+                raw = resp.read()
+                if resp.headers.get("Content-Encoding", "").lower() == "gzip":
+                    raw = gzip.decompress(raw)
+                body = raw.decode("utf-8")
                 return json.loads(body)
 
         except urllib.error.HTTPError as e:
@@ -198,7 +208,7 @@ def search(
     encoded_query = _url_encode(query)
 
     if subreddit:
-        sub = subreddit.lstrip("r/").strip()
+        sub = subreddit.removeprefix("r/").strip()
         url = (
             f"https://www.reddit.com/r/{sub}/search.json"
             f"?q={encoded_query}&restrict_sr=on&sort=relevance&t=month&limit={limit}&raw_json=1"
@@ -226,78 +236,6 @@ def search(
     return unique[:limit]
 
 
-def _enrich_post(item: Dict[str, Any], timeout: int = 10) -> Dict[str, Any]:
-    """Enrich a single post with top comments. Never raises."""
-    try:
-        from . import reddit_enrich
-        thread_data = reddit_enrich.fetch_thread_data(item["url"], timeout=timeout)
-        if not thread_data:
-            return item
-        parsed = reddit_enrich.parse_thread_data(thread_data)
-        comments = parsed.get("comments", [])
-        top = reddit_enrich.get_top_comments(comments)
-        item["top_comments"] = [
-            {
-                "score": c.get("score", 0),
-                "excerpt": (c.get("body") or "")[:200],
-                "author": c.get("author", ""),
-            }
-            for c in top[:10]
-        ]
-    except Exception:
-        # Never discard — keep post with empty metadata
-        pass
-    return item
-
-
-def _enrich_posts(posts: List[Dict[str, Any]], depth: str = "default") -> List[Dict[str, Any]]:
-    """Enrich top N posts with comment data using threads. Total budget 45s."""
-    limit = ENRICH_LIMITS.get(depth, ENRICH_LIMITS["default"])
-    to_enrich = posts[:limit]
-    rest = posts[limit:]
-
-    if not to_enrich:
-        return posts
-
-    enriched = []
-    try:
-        with ThreadPoolExecutor(max_workers=min(limit, 4)) as executor:
-            futures = {
-                executor.submit(_enrich_post, post, 10): i
-                for i, post in enumerate(to_enrich)
-            }
-            # Collect results with 45s total budget
-            import concurrent.futures
-            done, not_done = concurrent.futures.wait(futures, timeout=45)
-            # Build result list preserving order
-            result_map: Dict[int, Dict[str, Any]] = {}
-            for future in done:
-                idx = futures[future]
-                try:
-                    result_map[idx] = future.result(timeout=0)
-                except Exception:
-                    result_map[idx] = to_enrich[idx]
-            # Any not-done futures: keep original post
-            for future in not_done:
-                idx = futures[future]
-                result_map[idx] = to_enrich[idx]
-                future.cancel()
-            enriched = [result_map[i] for i in range(len(to_enrich))]
-    except Exception:
-        enriched = to_enrich
-
-    return enriched + rest
-
-
-def _search_subreddit(sub: str, topic: str, depth: str, timeout: int = 15) -> List[Dict[str, Any]]:
-    """Search a single subreddit. Never raises."""
-    try:
-        return search(topic, depth=depth, subreddit=sub, timeout=timeout)
-    except Exception as e:
-        _log(f"Subreddit search failed for r/{sub}: {e}")
-        return []
-
-
 def search_reddit_public(
     topic: str,
     from_date: str,
@@ -305,12 +243,17 @@ def search_reddit_public(
     depth: str = "default",
     subreddits: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
-    """High-level Reddit public search matching the openai_reddit interface.
+    """High-level free Reddit search + enrichment (keyless).
 
-    When subreddits are provided (from agent planning), searches each targeted
-    sub first, then does global search, and deduplicates across both. This
-    mirrors the SC search_and_enrich() flow where pre-resolved subreddits get
-    priority.
+    Thin compatibility shim over the tiered keyless pipeline: the legacy
+    ``.json`` search/enrichment endpoints now return HTTP 403, so this delegates
+    to ``reddit_keyless.search_and_enrich`` (Tier 0 one-shot ``.json`` →
+    Tier 1 RSS discovery → Tier 2 shreddit comment enrichment). The name and
+    signature are preserved so ``pipeline.py`` and other callers need no change
+    and the ScrapeCreators backup still engages when this returns empty.
+
+    The module-level ``search`` / ``_parse_posts`` helpers remain in use as the
+    keyless pipeline's demoted Tier 0 ``.json`` attempt.
 
     Args:
         topic: Search topic
@@ -321,57 +264,9 @@ def search_reddit_public(
 
     Returns:
         List of normalized item dicts matching ScrapeCreators output format.
+        Empty list on total failure (so SC backup can engage).
     """
-    all_posts: List[Dict[str, Any]] = []
-
-    # Phase 1: Search targeted subreddits in parallel (if provided)
-    if subreddits:
-        _log(f"Searching {len(subreddits)} targeted subreddits: {subreddits}")
-        workers = min(4, len(subreddits))
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {
-                executor.submit(_search_subreddit, sub, topic, depth): sub
-                for sub in subreddits
-            }
-            for future in futures:
-                sub = futures[future]
-                try:
-                    sub_posts = future.result(timeout=30)
-                    _log(f"  -> {len(sub_posts)} results from r/{sub}")
-                    all_posts.extend(sub_posts)
-                except (Exception, FuturesTimeoutError) as e:
-                    _log(f"  -> r/{sub} failed: {e}")
-
-    # Phase 2: Global search
-    global_posts = search(topic, depth=depth)
-    all_posts.extend(global_posts)
-
-    # Deduplicate by URL (targeted results keep priority since they come first)
-    seen_urls: set = set()
-    results: List[Dict[str, Any]] = []
-    for post in all_posts:
-        if post["url"] not in seen_urls:
-            seen_urls.add(post["url"])
-            results.append(post)
-
-    # Date filter: keep posts in range or with unknown dates
-    filtered = []
-    for item in results:
-        d = item.get("date")
-        if d is None or (from_date <= d <= to_date):
-            filtered.append(item)
-
-    # Sort by engagement (score desc)
-    filtered.sort(
-        key=lambda x: x.get("engagement", {}).get("score", 0),
-        reverse=True,
+    from . import reddit_keyless
+    return reddit_keyless.search_and_enrich(
+        topic, from_date, to_date, depth=depth, subreddits=subreddits
     )
-
-    # Enrich top posts with comments
-    filtered = _enrich_posts(filtered, depth=depth)
-
-    # Re-index IDs
-    for i, item in enumerate(filtered):
-        item["id"] = f"R{i + 1}"
-
-    return filtered

@@ -8,24 +8,40 @@ from collections import Counter
 from datetime import date
 from urllib.parse import urlparse
 
-from . import dates, schema
+from . import dates, schema, skill_meta
 
 
 def _skill_version() -> str:
-    """Read plugin version from .claude-plugin/plugin.json if available.
+    """Read plugin version from .claude-plugin/plugin.json, falling back to SKILL.md frontmatter.
 
-    Tries nearest plugin.json by walking up from render.py's own location.
-    Falls back to "?" if not found. This keeps the badge emission from
-    crashing on non-plugin-cache installs (repo checkout, Gemini, Codex).
+    Per-harness skill install dirs (`~/.claude/skills`, `~/.codex/skills`, `~/.agents/skills`,
+    Hermes, etc.) do not always carry `.claude-plugin/plugin.json` — that file ships with
+    plugin-cache installs but not with per-harness skill installs. SKILL.md frontmatter is
+    the fallback that keeps the badge from emitting v? on those installs. Returns "?" only
+    if no usable version string is found from either source (missing files, corrupt JSON,
+    or SKILL.md without a version line).
+
+    A corrupt manifest at one ancestor does not shadow a valid manifest at a deeper one
+    (continue, not break). SKILL.md parsing accepts double-quoted, single-quoted, or
+    unquoted YAML version scalars (delegated to skill_meta.read_skill_version).
     """
     here = pathlib.Path(__file__).resolve()
-    for parent in [here.parent, *here.parents]:
-        candidate = parent / ".claude-plugin" / "plugin.json"
-        if candidate.is_file():
+    for parent in here.parents:
+        manifest = parent / ".claude-plugin" / "plugin.json"
+        if manifest.is_file():
             try:
-                return json.loads(candidate.read_text()).get("version", "?")
+                version = json.loads(manifest.read_text()).get("version")
             except (json.JSONDecodeError, OSError):
-                return "?"
+                continue
+            if version:
+                return version
+
+    # No usable manifest found at any ancestor — fall back to SKILL.md frontmatter.
+    # First SKILL.md found in the walk is THIS skill's; never traverse past it.
+    for parent in here.parents:
+        skill_md = parent / "SKILL.md"
+        if skill_md.is_file():
+            return skill_meta.read_skill_version(skill_md) or "?"
     return "?"
 
 
@@ -52,6 +68,7 @@ SOURCE_LABELS = {
     "xiaohongshu": "Xiaohongshu",
     "x": "X",
     "github": "GitHub",
+    "digg": "Digg",
     "perplexity": "Perplexity",
 }
 
@@ -79,7 +96,7 @@ def render_compact(report: schema.Report, cluster_limit: int = 8, fun_level: str
     non_empty = [s for s, items in sorted(report.items_by_source.items()) if items]
     lines = [
         *_render_badge(),
-        f"# last30days v3.0.0: {report.topic}",
+        f"# last30days v{_skill_version()}: {report.topic}",
         "",
         *_assistant_safety_lines(),
         f"- Date range: {report.range_from} to {report.range_to}",
@@ -168,6 +185,168 @@ def render_compact(report: schema.Report, cluster_limit: int = 8, fun_level: str
     lines.extend(_render_canonical_boundary())
 
     return "\n".join(lines).strip() + "\n"
+
+
+def render_for_html(
+    report: schema.Report,
+    synthesis_md: str | None = None,
+    *,
+    save_path: str | None = None,
+) -> str:
+    """Render markdown intended for shareable HTML conversion.
+
+    This output keeps the public badge, compact source/date metadata, an
+    optional one-line data quality note, optional synthesized brief markdown,
+    and the engine footer. It deliberately omits the debug file header,
+    model-facing safety note, and evidence scratchpad emitted by
+    render_compact().
+
+    When synthesis_md is None, the body is intentionally sparse: badge,
+    metadata, optional data quality note, and engine footer only.
+    """
+    lines = [
+        *_render_badge(),
+        *_render_html_metadata(report),
+    ]
+    if synthesis_md:
+        lines.extend(["", synthesis_md.strip()])
+    # Data quality warnings are NOT rendered into the HTML artifact. The HTML
+    # is meant to be shared (Slack, email, Notion); recipients haven't asked
+    # for technical commentary about how the run was produced. Generators see
+    # the same warnings via collect_html_warnings() routed to stderr by the
+    # CLI, so they can fix quality issues before sharing.
+    _append_html_footer(lines, report, save_path)
+    return "\n".join(lines).strip() + "\n"
+
+
+def render_for_html_comparison(
+    entity_reports: list[tuple[str, schema.Report]],
+    synthesis_md: str | None = None,
+    *,
+    save_path: str | None = None,
+) -> str:
+    """Render comparison markdown intended for shareable HTML conversion.
+
+    Same semantics as render_for_html(), but metadata and data quality notes
+    are aggregated across the compared entities.
+    """
+    if not entity_reports:
+        raise ValueError("render_for_html_comparison requires at least one report")
+
+    entities = [label for label, _ in entity_reports]
+    main_report = entity_reports[0][1]
+    meta = (
+        f"<!-- META: {main_report.range_from} to {main_report.range_to} "
+        f"· comparing {len(entities)}: {', '.join(entities)} -->"
+    )
+    lines = [
+        *_render_badge(),
+        meta,
+    ]
+    if synthesis_md:
+        lines.extend(["", synthesis_md.strip()])
+    # Comparison data quality notes also go to stderr, not into the artifact.
+    _append_html_footer(lines, main_report, save_path)
+    return "\n".join(lines).strip() + "\n"
+
+
+def collect_html_warnings(report: schema.Report) -> list[str]:
+    """Collect data quality warnings for stderr output (NOT for the HTML artifact).
+
+    Returns a list of human-readable warning strings. Empty list if the run
+    was clean. Used by the CLI to emit diagnostics to stderr after writing
+    the HTML to stdout/file.
+    """
+    notes: list[str] = []
+    if _render_degraded_run_warning(report):
+        notes.append("Run was missing pre-flight resolution. Re-run with `--plan` for richer results.")
+    elif _render_pre_research_warning(report):
+        notes.append("Pre-research was skipped, so results may be thinner than a resolved run.")
+    freshness_warning = _assess_data_freshness(report)
+    if freshness_warning:
+        notes.append(freshness_warning)
+    notes.extend(report.warnings)
+    return _dedupe_notes(notes)
+
+
+def collect_html_warnings_comparison(
+    entity_reports: list[tuple[str, schema.Report]],
+) -> list[str]:
+    """Collect comparison-mode warnings, prefixed by entity label."""
+    notes: list[str] = []
+    for label, report in entity_reports:
+        for w in collect_html_warnings(report):
+            notes.append(f"{label}: {w}")
+    return notes
+
+
+def _render_html_metadata(report: schema.Report) -> list[str]:
+    """Inline metadata as an HTML comment marker.
+
+    html_render.py post-processes ``<!-- META: ... -->`` markers into a
+    ``<div class="meta">`` after markdown conversion, so the metadata escapes
+    the markdown converter's HTML-escaping pass cleanly. Same pattern as the
+    PASS_THROUGH_FOOTER marker used for the engine tree.
+    """
+    non_empty = [s for s, items in sorted(report.items_by_source.items()) if items]
+    if non_empty:
+        sources = ", ".join(_source_label(s) for s in non_empty)
+    else:
+        sources = "no active sources"
+    return [
+        f"<!-- META: {report.range_from} to {report.range_to} · {sources} -->",
+    ]
+
+
+def _render_html_data_quality_note(report: schema.Report) -> str | None:
+    notes: list[str] = []
+    degraded_warning = _render_degraded_run_warning(report)
+    if degraded_warning:
+        notes.append("This run was missing pre-flight resolution. Re-run with `--plan` for richer results.")
+    pre_research_warning = _render_pre_research_warning(report)
+    if pre_research_warning and not degraded_warning:
+        notes.append("Pre-research was skipped, so results may be thinner than a resolved run.")
+    freshness_warning = _assess_data_freshness(report)
+    if freshness_warning:
+        notes.append(freshness_warning)
+    notes.extend(report.warnings)
+    if not notes:
+        return None
+    return f"> **Data quality note:** {' '.join(_dedupe_notes(notes))}"
+
+
+def _render_html_comparison_data_quality_note(
+    entity_reports: list[tuple[str, schema.Report]],
+) -> str | None:
+    notes: list[str] = []
+    for label, report in entity_reports:
+        note = _render_html_data_quality_note(report)
+        if note:
+            clean = note.removeprefix("> **Data quality note:** ").strip()
+            notes.append(f"{label}: {clean}")
+    if not notes:
+        return None
+    return f"> **Data quality note:** {' '.join(_dedupe_notes(notes))}"
+
+
+def _dedupe_notes(notes: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for note in notes:
+        normalized = " ".join(str(note).split())
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        out.append(normalized)
+    return out
+
+
+def _append_html_footer(lines: list[str], report: schema.Report, save_path: str | None) -> None:
+    footer = _render_emoji_footer(report, save_path)
+    lines.append("")
+    lines.append("<!-- PASS-THROUGH FOOTER: emit verbatim in the model response per LAW 5. -->")
+    lines.extend(footer)
+    lines.append("<!-- END PASS-THROUGH FOOTER -->")
 
 
 def _render_canonical_boundary() -> list[str]:
@@ -392,12 +571,226 @@ def _render_comparison_scaffold(topic: str) -> list[str]:
     ]
 
 
+def render_comparison_multi(
+    entity_reports: list[tuple[str, schema.Report]],
+    *,
+    cluster_limit: int = 4,
+    fun_level: str = "medium",
+    save_path: str | None = None,
+) -> str:
+    """Render N (entity, Report) pairs as a single comparison output.
+
+    Reuses _render_comparison_scaffold for the synthesis table and emits
+    per-entity evidence sections inside one EVIDENCE FOR SYNTHESIS envelope.
+    The single-Report render_compact path is unchanged.
+
+    Args:
+        entity_reports: Ordered (label, Report) pairs. The first pair is the
+            user's main topic; the remainder are discovered/explicit competitors.
+        cluster_limit: Max clusters to surface per entity (kept lower than the
+            single-entity default to keep N-way comparisons readable).
+        fun_level: Same fun-level knob as render_compact, applied to each
+            entity's best-takes block.
+        save_path: Optional save-path display string for the footer.
+    """
+    if not entity_reports:
+        raise ValueError("render_comparison_multi requires at least one report")
+
+    entities = [label for label, _ in entity_reports]
+    main_label, main_report = entity_reports[0]
+    synthesized_topic = " vs ".join(entities)
+
+    lines: list[str] = [
+        *_render_badge(),
+        f"# last30days v{_skill_version()}: {synthesized_topic}",
+        "",
+        *_assistant_safety_lines(),
+        f"- Comparison mode: {len(entities)} entities ({', '.join(entities)})",
+        f"- Date range: {main_report.range_from} to {main_report.range_to}",
+        "",
+    ]
+
+    aggregated_warnings: list[str] = []
+    for label, report in entity_reports:
+        aggregated_warnings.extend(f"[{label}] {w}" for w in report.warnings)
+    if aggregated_warnings:
+        lines.append("## Warnings")
+        lines.extend(f"- {w}" for w in aggregated_warnings)
+        lines.append("")
+
+    lines.append(
+        "<!-- EVIDENCE FOR SYNTHESIS: read this, do not emit verbatim. Transform into "
+        "`What I learned:` prose per LAW 2. Each entity has its own evidence subsection. -->"
+    )
+    lines.append("")
+
+    resolved_block = _render_resolved_entities_block(entity_reports)
+    if resolved_block:
+        lines.extend(resolved_block)
+        lines.append("")
+
+    fun_params = _FUN_LEVELS.get(fun_level, _FUN_LEVELS["medium"])
+    for label, report in entity_reports:
+        lines.extend(_render_entity_evidence_block(
+            label=label,
+            report=report,
+            cluster_limit=cluster_limit,
+            fun_params=fun_params,
+        ))
+
+    lines.append("<!-- END EVIDENCE FOR SYNTHESIS -->")
+    lines.append("")
+
+    # Reuse the existing comparison scaffold by feeding it the synthesized
+    # topic. _parse_comparison_entities splits on " vs " so the scaffold
+    # picks up all N entities automatically.
+    scaffold = _render_comparison_scaffold(synthesized_topic)
+    lines.extend(scaffold)
+
+    footer = _render_emoji_footer(main_report, save_path)
+    if footer:
+        lines.append("")
+        lines.append("<!-- PASS-THROUGH FOOTER: emit verbatim in the model response per LAW 5. -->")
+        lines.extend(footer)
+        lines.append("<!-- END PASS-THROUGH FOOTER -->")
+
+    lines.extend(_render_canonical_boundary())
+
+    return "\n".join(lines).strip() + "\n"
+
+
+def _render_resolved_entities_block(
+    entity_reports: list[tuple[str, schema.Report]],
+) -> list[str]:
+    """Emit a visible per-entity Step 0.55 resolution summary.
+
+    Reads `resolved` dicts from each Report's artifacts. Returns an empty
+    list when no entity has a resolved payload (mock mode, no web backend,
+    or artifacts not populated). Missing per-entity fields render as `-`.
+    Context strings truncate at 120 chars.
+    """
+    any_resolved = any(
+        isinstance(report.artifacts.get("resolved"), dict)
+        for _label, report in entity_reports
+    )
+    if not any_resolved:
+        return []
+
+    out: list[str] = ["## Resolved Entities", ""]
+    for label, report in entity_reports:
+        resolved = report.artifacts.get("resolved") or {}
+        x_handle = resolved.get("x_handle") or ""
+        subs = resolved.get("subreddits") or []
+        gh_user = resolved.get("github_user") or ""
+        gh_repos = resolved.get("github_repos") or []
+        context = resolved.get("context") or ""
+
+        x_display = f"@{x_handle}" if x_handle else "-"
+        subs_display = (
+            ", ".join(f"r/{s}" for s in subs[:5]) + (
+                f" (+{len(subs) - 5})" if len(subs) > 5 else ""
+            )
+        ) if subs else "-"
+        gh_display = f"@{gh_user}" if gh_user else "-"
+        if gh_repos:
+            gh_display += f" ({', '.join(gh_repos[:3])}" + (
+                f" +{len(gh_repos) - 3}" if len(gh_repos) > 3 else ""
+            ) + ")"
+        context_display = _truncate(context, 120) if context else "-"
+
+        out.append(
+            f"- **{label}**: X {x_display} | Subs {subs_display} | "
+            f"GitHub {gh_display} | Context: {context_display}"
+        )
+    return out
+
+
+def _render_entity_evidence_block(
+    *,
+    label: str,
+    report: schema.Report,
+    cluster_limit: int,
+    fun_params: dict,
+) -> list[str]:
+    """Render one entity's clusters and best-takes inside the evidence envelope."""
+    candidate_by_id = {c.candidate_id: c for c in report.ranked_candidates}
+    out: list[str] = [f"## {label}", ""]
+
+    if not report.clusters:
+        out.append("(no significant discussion this month)")
+        out.append("")
+        return out
+
+    out.append("### Ranked Evidence Clusters")
+    out.append("")
+    for index, cluster in enumerate(report.clusters[:cluster_limit], start=1):
+        out.append(
+            f"#### {index}. {cluster.title} "
+            f"(score {cluster.score:.0f}, {len(cluster.candidate_ids)} item"
+            f"{'s' if len(cluster.candidate_ids) != 1 else ''}, "
+            f"sources: {', '.join(_source_label(s) for s in cluster.sources)})"
+        )
+        if cluster.uncertainty:
+            out.append(f"- Uncertainty: {cluster.uncertainty}")
+        for rep_index, candidate_id in enumerate(cluster.representative_ids, start=1):
+            candidate = candidate_by_id.get(candidate_id)
+            if not candidate:
+                continue
+            out.extend(_render_candidate(candidate, prefix=f"{rep_index}."))
+        out.append("")
+
+    best_takes = _render_best_takes(
+        report.ranked_candidates,
+        limit=fun_params["limit"],
+        threshold=fun_params["threshold"],
+    )
+    if best_takes:
+        out.extend(best_takes)
+        out.append("")
+
+    return out
+
+
+def render_comparison_multi_context(
+    entity_reports: list[tuple[str, schema.Report]],
+    cluster_limit: int = 4,
+) -> str:
+    """Context-mode rendering for the multi-entity comparison."""
+    if not entity_reports:
+        raise ValueError("render_comparison_multi_context requires at least one report")
+
+    entities = [label for label, _ in entity_reports]
+    lines = [
+        f"Comparison: {' vs '.join(entities)}",
+        f"Entities: {len(entities)}",
+        _AI_SAFETY_NOTE,
+        "",
+    ]
+    resolved_block = _render_resolved_entities_block(entity_reports)
+    if resolved_block:
+        lines.extend(resolved_block)
+        lines.append("")
+    for label, report in entity_reports:
+        lines.append(f"## {label}")
+        lines.append(f"Intent: {report.query_plan.intent}")
+        if not report.clusters:
+            lines.append("- (no significant discussion this month)")
+        else:
+            for cluster in report.clusters[:cluster_limit]:
+                lines.append(
+                    f"- {cluster.title} "
+                    f"[{', '.join(_source_label(s) for s in cluster.sources)}]"
+                )
+        lines.append("")
+    return "\n".join(lines).strip() + "\n"
+
+
 def render_full(report: schema.Report) -> str:
     """Full data dump: ALL clusters + ALL items by source. For saved files and debugging."""
     # Start with the same header as compact
     non_empty = [s for s, items in sorted(report.items_by_source.items()) if items]
     lines = [
-        f"# last30days v3.0.0: {report.topic}",
+        f"# last30days v{_skill_version()}: {report.topic}",
         "",
         *_assistant_safety_lines(),
         f"- Date range: {report.range_from} to {report.range_to}",
@@ -409,6 +802,17 @@ def render_full(report: schema.Report) -> str:
         lines.append("## Warnings")
         lines.extend(f"- {warning}" for warning in report.warnings)
         lines.append("")
+
+    # When this Report is a per-entity sub-run from vs-mode / --competitors,
+    # include the single-row Resolved Entities block so the saved file is
+    # self-describing. The artifact is populated by last30days.py's
+    # _competitor_runner and _main_runner closures.
+    resolved = report.artifacts.get("resolved")
+    if isinstance(resolved, dict) and resolved.get("entity"):
+        single_row = _render_resolved_entities_block([(resolved["entity"], report)])
+        if single_row:
+            lines.extend(single_row)
+            lines.append("")
 
     # ALL clusters (no limit)
     lines.append("## Ranked Evidence Clusters")
@@ -438,7 +842,7 @@ def render_full(report: schema.Report) -> str:
     lines.append("## All Items by Source")
     lines.append("")
     source_order = ["reddit", "x", "youtube", "tiktok", "instagram", "threads", "pinterest",
-                    "hackernews", "bluesky", "truthsocial", "polymarket", "grounding", "xiaohongshu", "github", "perplexity"]
+                    "hackernews", "bluesky", "truthsocial", "polymarket", "grounding", "xiaohongshu", "github", "digg", "perplexity"]
     for source in source_order:
         items = report.items_by_source.get(source, [])
         if not items:
@@ -464,6 +868,9 @@ def render_full(report: schema.Report) -> str:
                     tc_score = tc.get("score", "")
                     attribution = _comment_attribution(item.source, tc.get("author"))
                     lines.append(f"  Top comment {attribution} ({tc_score} {vote_label}): {excerpt}")
+            # Digg: inline X-post quotes attached to the cluster.
+            for post in _digg_posts_for(item, limit=3):
+                lines.append(f"  > {_format_digg_quote(post)}")
             # Comment insights for Reddit
             insights = item.metadata.get("comment_insights", [])
             if insights:
@@ -585,6 +992,8 @@ def _render_candidate(candidate: schema.Candidate, prefix: str) -> list[str]:
         source = primary.source if primary else None
         attribution = _comment_attribution(source, tc.get("author"))
         lines.append(f"   - {attribution} ({score} {vote_label}): {_truncate(excerpt.strip(), 240)}")
+    for post in _digg_posts_for(primary):
+        lines.append(f"   - {_format_digg_quote(post)}")
     insight = _comment_insight(primary)
     if insight:
         lines.append(f"   - Insight: {_truncate(insight, 220)}")
@@ -835,6 +1244,7 @@ _FOOTER_SOURCES: list[tuple[str, str, str, str, list[tuple[str, str]]]] = [
     ("bluesky",     "🦋", "Bluesky",      "post",     [("likes", "likes"), ("reposts", "reposts")]),
     ("truthsocial", "🇺🇸", "Truth Social", "post",     [("likes", "likes"), ("reposts", "reposts")]),
     ("github",      "🐙", "GitHub",       "item",     [("reactions", "reactions"), ("comments", "comments")]),
+    ("digg",        "⛏️", "Digg",         "cluster",  [("postCount", "posts"), ("uniqueAuthors", "authors")]),
 ]
 
 
@@ -875,15 +1285,16 @@ def _build_source_footer_lines(report: schema.Report) -> list[str]:
             if total > 0:
                 total_str = f"{total:,}" if total >= 1000 else str(total)
                 parts.append(f"{total_str} {word}")
-        # YouTube: append "N with transcripts" instead of a third likes-based column.
-        # Transcripts are a more meaningful research-depth signal than likes.
+        # YouTube: always append "M/N with transcripts" so a zero-transcript run
+        # (typically caused by a stale yt-dlp binary) is visible at the conclusion
+        # surface. Hiding zero converts a problem signal into an absence; the very
+        # case that needs to be loud is the one previously omitted from the footer.
         if source_key == "youtube":
             with_transcripts = sum(
                 1 for it in items
                 if (it.metadata.get("transcript_highlights") or it.metadata.get("transcript_snippet"))
             )
-            if with_transcripts > 0:
-                parts.append(f"{with_transcripts} with transcripts")
+            parts.append(f"{with_transcripts}/{len(items)} with transcripts")
         stats = " │ ".join(parts)
         out.append(_footer_line_for_source(emoji, label, len(items), item_word, stats))
 
@@ -1092,6 +1503,7 @@ ENGAGEMENT_DISPLAY: dict[str, list[tuple[str, str]]] = {
     "polymarket":   [],
     "github":       [("reactions", "react"), ("comments", "cmt")],
     "perplexity":   [("citations", "cite")],
+    "digg":         [("postCount", "posts"), ("uniqueAuthors", "auth")],
 }
 
 
@@ -1279,16 +1691,6 @@ def _top_comments_list(item: schema.SourceItem | None, limit: int = 3, min_score
     return [c for c in comments if (c.get("score") or 0) >= min_score][:limit]
 
 
-def _top_comment_excerpt(item: schema.SourceItem | None) -> str | None:
-    if not item:
-        return None
-    comments = item.metadata.get("top_comments") or []
-    if not comments or not isinstance(comments[0], dict):
-        return None
-    top = comments[0]
-    return str(top.get("excerpt") or top.get("text") or "").strip() or None
-
-
 def _comment_insight(item: schema.SourceItem | None) -> str | None:
     if not item:
         return None
@@ -1296,6 +1698,39 @@ def _comment_insight(item: schema.SourceItem | None) -> str | None:
     if not insights:
         return None
     return str(insights[0]).strip() or None
+
+
+def _digg_posts_for(item: schema.SourceItem | None, limit: int = 3) -> list[dict]:
+    """Return up to `limit` parsed Digg posts attached as enrichment to a cluster.
+
+    Returns an empty list for non-digg sources or clusters without enrichment.
+    """
+    if not item or item.source != "digg":
+        return []
+    posts = item.metadata.get("posts") or []
+    if not isinstance(posts, list):
+        return []
+    out: list[dict] = []
+    for entry in posts:
+        if isinstance(entry, dict) and entry.get("body") and entry.get("username"):
+            out.append(entry)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _format_digg_quote(post: dict, body_limit: int = 200) -> str:
+    """Format a Digg-attached X post as an inline 'via Digg' quote line."""
+    handle = post.get("username") or ""
+    x_url = post.get("x_url") or ""
+    body = (post.get("body") or "").replace("\n", " ").strip()
+    if len(body) > body_limit:
+        body = body[: body_limit - 1].rstrip() + "…"
+    if x_url and handle:
+        return f"[@{handle}]({x_url}) via Digg: {body}"
+    if handle:
+        return f"@{handle} via Digg: {body}"
+    return f"via Digg: {body}"
 
 
 def _transcript_highlights(item: schema.SourceItem | None) -> list[str]:
