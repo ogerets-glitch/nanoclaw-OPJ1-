@@ -14,7 +14,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { initTestSessionDb, closeSessionDb, getInboundDb } from './db/connection.js';
 import { getPendingMessages } from './db/messages-in.js';
 import { formatMessages, stripInternalTags } from './formatter.js';
-import { TIMEZONE } from './timezone.js';
+import { TIMEZONE, formatLocalTime } from './timezone.js';
 
 beforeEach(() => {
   initTestSessionDb();
@@ -59,6 +59,39 @@ describe('context timezone header', () => {
     const firstMsgIdx = result.indexOf('<message ');
     expect(ctxIdx).toBeGreaterThanOrEqual(0);
     expect(firstMsgIdx).toBeGreaterThan(ctxIdx);
+  });
+
+  it('includes a now="..." attribute reflecting prompt-build time', () => {
+    const callTime = Date.now();
+    const result = formatMessages([]);
+    const match = result.match(/<context timezone="[^"]+" now="([^"]+)" \/>/);
+    expect(match).not.toBeNull();
+    // Compare formatted strings instead of Date-parsing the locale output
+    // (engine-dependent). The minute may tick between callTime and the
+    // formatter's internal clock read, so accept either minute.
+    const expected = [callTime, callTime + 60_000].map((t) =>
+      formatLocalTime(new Date(t).toISOString(), TIMEZONE),
+    );
+    expect(expected).toContain(match![1]);
+  });
+});
+
+describe('task message deliveredAt', () => {
+  it('stamps deliveredAt with delivery time, not the (possibly old) row timestamp', () => {
+    // Simulate a task delivered hours late: row timestamp is yesterday.
+    const yesterday = new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString();
+    insertMessage('t1', 'task', { prompt: 'do the thing' }, { timestamp: yesterday });
+    const callTime = Date.now();
+    const result = formatMessages(getPendingMessages());
+    const match = result.match(/<task[^>]* time="([^"]+)" deliveredAt="([^"]+)">/);
+    expect(match).not.toBeNull();
+    // time= must stay the row's insert time; the old timestamp must NOT
+    // leak into deliveredAt, which reflects prompt-build time instead.
+    expect(match![1]).toBe(formatLocalTime(yesterday, TIMEZONE));
+    const expected = [callTime, callTime + 60_000].map((t) =>
+      formatLocalTime(new Date(t).toISOString(), TIMEZONE),
+    );
+    expect(expected).toContain(match![2]);
   });
 });
 

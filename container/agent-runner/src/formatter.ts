@@ -127,7 +127,12 @@ export function extractRouting(messages: MessageInRow[]): RoutingContext {
  * Strips routing fields — the agent never sees platform_id, channel_type, thread_id.
  */
 export function formatMessages(messages: MessageInRow[]): string {
-  const header = `<context timezone="${escapeXml(TIMEZONE)}" />\n`;
+  // `now` is evaluated at prompt-build time (= turn processing time), so the
+  // agent always has an authoritative "current time" anchor — even when a
+  // scheduled task is delivered late. Restores the current_time attribute
+  // dropped upstream in dcfa12e.
+  const now = formatLocalTime(new Date().toISOString(), TIMEZONE);
+  const header = `<context timezone="${escapeXml(TIMEZONE)}" now="${escapeXml(now)}" />\n`;
   if (messages.length === 0) return header;
 
   // Group by kind
@@ -142,7 +147,7 @@ export function formatMessages(messages: MessageInRow[]): string {
     parts.push(formatChatMessages(chatMessages));
   }
   if (taskMessages.length > 0) {
-    parts.push(...taskMessages.map(formatTaskMessage));
+    parts.push(...taskMessages.map((m) => formatTaskMessage(m, now)));
   }
   if (webhookMessages.length > 0) {
     parts.push(...webhookMessages.map(formatWebhookMessage));
@@ -195,7 +200,11 @@ function originAttr(msg: MessageInRow): string {
   return '';
 }
 
-function formatTaskMessage(msg: MessageInRow): string {
+// `time` is the row's DB insert time, which can predate delivery by hours
+// (host downtime, late queue drain). `deliveredAt` is the prompt-build time
+// from formatMessages, so the agent can tell scheduled time and actual
+// delivery apart.
+function formatTaskMessage(msg: MessageInRow, deliveredAt: string): string {
   const content = parseContent(msg.content);
   const from = originAttr(msg);
   const time = formatLocalTime(msg.timestamp, TIMEZONE);
@@ -204,7 +213,7 @@ function formatTaskMessage(msg: MessageInRow): string {
     parts.push('Script output:', JSON.stringify(content.scriptOutput, null, 2), '');
   }
   parts.push('Instructions:', content.prompt || '');
-  return `<task${from} time="${escapeXml(time)}">${parts.join('\n')}</task>`;
+  return `<task${from} time="${escapeXml(time)}" deliveredAt="${escapeXml(deliveredAt)}">${parts.join('\n')}</task>`;
 }
 
 function formatWebhookMessage(msg: MessageInRow): string {
