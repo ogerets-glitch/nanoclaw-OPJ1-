@@ -1,10 +1,10 @@
 ---
 name: pdf-reader
-description: Read and extract text from PDF files — documents, reports, contracts, spreadsheets. Use whenever you need to read PDF content, not just when explicitly asked. Handles local files, URLs, and Telegram attachments.
+description: Read, extract, and edit PDF files — documents, reports, contracts, spreadsheets. Extract text, merge multiple PDFs, split out page ranges, rotate pages, compress file size. Use whenever you need to read or manipulate PDF content, not just when explicitly asked. Handles local files, URLs, and Telegram attachments.
 allowed-tools: Bash(pdf-reader:*)
 ---
 
-# PDF Reader
+# PDF Reader & Editor
 
 ## Quick start
 
@@ -14,6 +14,10 @@ pdf-reader extract report.pdf --layout     # Preserve tables/columns
 pdf-reader fetch https://example.com/doc.pdf  # Download and extract
 pdf-reader info report.pdf                 # Show metadata + size
 pdf-reader list                            # List all PDFs in directory tree
+pdf-reader merge out.pdf a.pdf b.pdf       # Merge PDFs into one
+pdf-reader split report.pdf --pages 3-7    # Extract pages 3-7 as new PDF
+pdf-reader rotate scan.pdf +90             # Rotate all pages 90° clockwise
+pdf-reader compress big.pdf                # Shrink file size (/ebook quality)
 ```
 
 ## Commands
@@ -56,6 +60,51 @@ pdf-reader list
 ```
 
 Recursively lists all `.pdf` files with page count and file size.
+
+### merge — Combine multiple PDFs into one
+
+```bash
+pdf-reader merge combined.pdf part1.pdf part2.pdf part3.pdf
+```
+
+First argument is the OUTPUT file, all following arguments are inputs (in order).
+
+### split — Extract pages or burst into single pages
+
+```bash
+pdf-reader split report.pdf --pages 3-7              # Pages 3-7 -> report-pages-3-7.pdf
+pdf-reader split report.pdf --pages 3-7 chapter2.pdf # Pages 3-7 -> chapter2.pdf
+pdf-reader split report.pdf                          # Every page -> report-page-1.pdf, -2.pdf, ...
+```
+
+Page ranges are 1-based and inclusive. Without `--pages`, the PDF is burst into one file per page.
+
+### rotate — Rotate pages
+
+```bash
+pdf-reader rotate scan.pdf +90                  # All pages 90° clockwise -> scan-rotated.pdf
+pdf-reader rotate scan.pdf -90 fixed.pdf        # All pages 90° counter-clockwise
+pdf-reader rotate scan.pdf 180 --pages 2-2      # Only page 2 upside down
+```
+
+Angles: `+90` (clockwise), `-90` (counter-clockwise), `180`.
+
+### compress — Shrink PDF file size
+
+```bash
+pdf-reader compress big.pdf                # -> big-compressed.pdf
+pdf-reader compress big.pdf small.pdf      # -> small.pdf
+```
+
+Uses ghostscript `/ebook` quality (150 DPI images) — good for email/messenger size limits.
+
+## Important: write outputs to a writable directory
+
+Attachments under `/workspace/extra/` are mounted READ-ONLY. Always write merge/split/rotate/compress outputs to the current working directory or `/tmp`, never next to the read-only input:
+
+```bash
+pdf-reader split /workspace/extra/attachments-in/oliver-1/doc.pdf --pages 1-3 /tmp/excerpt.pdf
+```
 
 ## Telegram PDF attachments
 

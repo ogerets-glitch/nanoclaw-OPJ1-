@@ -58,6 +58,16 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         libreoffice-calc \
         tini \
         unzip \
+        # Media + PDF toolchain: qpdf/ghostscript back the pdf-reader skill's
+        # merge/split/rotate/compress commands; ffmpeg (audio/video) and
+        # imagemagick/python3-pil (images) enable ad-hoc media conversion;
+        # python3-pypdf for programmatic PDF work from Python.
+        ffmpeg \
+        ghostscript \
+        imagemagick \
+        python3-pil \
+        python3-pypdf \
+        qpdf \
     && if [ "$INSTALL_CJK_FONTS" = "true" ]; then \
         apt-get install -y --no-install-recommends fonts-noto-cjk; \
        fi \
