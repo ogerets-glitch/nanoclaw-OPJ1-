@@ -37,7 +37,8 @@ Pro Vorschlag eine separate Frage an Oliver — KEINE Bulk-Approvals:
 > Vorschlag #<N>: <thematische Bezeichnung>
 > Empfehlung: <löschen / mergen / behalten>
 > Begründung: <ein Satz>
-> Aktion: `<delete_memory(id=…)>` (bzw. Merge-Syntax)
+> Bei Merge: der kuratierte Merge-Text aus dem Report (vollständig zeigen — DAS bestätigt Oliver)
+> Aktion: `consolidate_apply(…)` bzw. `delete_memory(id=…)` wie im Report angegeben
 >
 > Ja/Nein?
 
@@ -53,12 +54,14 @@ Auf Olivers Antwort warten. Genau drei zulässige Antworten:
 delete_memory(id=<ID>)
 ```
 
-**Merges:** zwei Schritte
-1. Den gemergten Content selbst zusammensetzen (vereine die zwei alten Inhalte sinnvoll, ohne Doppelungen, Tag-Union, Author behalten)
-2. `update_memory(id=<keep_id>, content=<gemerged>, tags=[<union>])`
-3. `delete_memory(id=<drop_id>)`
+**Merges:** über das Tool `consolidate_apply` — NICHT mehr selbst per update_memory + delete_memory zusammenbauen. Die Operation steht fertig im Report (target_id, source_ids, merged_content). Pro approved Vorschlag EIN Aufruf:
 
-Falls dir der Merge-Inhalt unklar ist (z.B. widersprüchliche Memories oder du bist dir nicht sicher, was zusammengehört): **nicht raten** — sag Oliver: „Merge unklar — wenn du das händisch lieber selbst schreibst, behalten wir #<N1> wie es ist und löschen #<N2> nicht." Frag erneut.
+1. `consolidate_apply(operations=[<Operation aus dem Report>], dry_run=true)` — Plausibilitäts-Check (existieren die IDs noch?). Bei `error` in der Antwort: Oliver melden, NICHT weitermachen.
+2. `consolidate_apply(operations=[<dieselbe Operation>], dry_run=false)` — führt aus. Transaktional: bei Fehler wird alles zurückgerollt, Quellen + Vorzustand landen vorher vollständig in der Archiv-Tabelle (`memories_archive`) — nichts geht verloren.
+
+Den `merged_content` aus dem Report wortgleich übernehmen — du formulierst ihn NICHT um (Oliver hat genau diesen Text bestätigt). Einzige Ausnahme: Oliver wünscht in seiner Antwort explizit eine Änderung — dann den geänderten Text verwenden und in der Bilanz erwähnen.
+
+Falls im Report bei einem Merge-Vorschlag der kuratierte Text fehlt oder kaputt aussieht: **nicht selbst schreiben** — Vorschlag überspringen, Oliver melden: „Merge-Text fehlt im Report — #<N1>/#<N2> bleiben unverändert."
 
 ### 5. Kurz-Zusammenfassung
 
@@ -68,7 +71,7 @@ Nach allen Approvals: eine kurze Bilanz an Oliver, was tatsächlich passiert ist
 
 ## Regeln
 
-- **Keine Auto-Aktionen.** Jede destruktive Operation (delete / content-überschreibendes update) braucht ein explizites Ja von Oliver.
+- **Keine Auto-Aktionen.** Jede destruktive Operation (delete / consolidate_apply mit dry_run=false / content-überschreibendes update) braucht ein explizites Ja von Oliver. `dry_run=true` ist read-only und jederzeit erlaubt.
 - **Pro Vorschlag eine Frage.** Keine „Soll ich alle X durchgehen?" — das verleitet zu Sammelantworten.
 - **Bei Unklarheit nachfragen, nicht raten.** Vor allem bei Merges.
 - **Niemals `Maintenance/Report`-Memories anfassen.** Die sind das Logbuch dieser Routine.
