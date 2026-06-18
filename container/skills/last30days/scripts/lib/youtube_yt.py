@@ -294,9 +294,14 @@ def search_youtube(
     cmd = _wrap_ytdlp_cmd(cmd)
 
     try:
-        result = subproc.run_with_timeout(cmd, timeout=120)
+        # 30s, not 120s: on datacenter egress IPs yt-dlp is bot-walled and a
+        # search that hasn't returned by 30s never will — it only burns wall
+        # time the hosting sub-agent doesn't have. Legit (SSH-routed) searches
+        # return well inside this. SC fallback in pipeline.py covers the empty
+        # result. Matches the transcript-download timeout below.
+        result = subproc.run_with_timeout(cmd, timeout=30)
     except subproc.SubprocTimeout:
-        _log("YouTube search timed out (120s)")
+        _log("YouTube search timed out (30s)")
         return {"items": [], "error": "Search timed out"}
     except FileNotFoundError:
         return {"items": [], "error": "yt-dlp not found"}
@@ -666,13 +671,21 @@ def search_and_transcribe(
     queries = expand_youtube_queries(topic, depth)
     seen_ids: Set[str] = set()
     items: List[Dict[str, Any]] = []
-    for q in queries:
+    for idx, q in enumerate(queries):
         search_result = search_youtube(q, from_date, to_date, depth)
-        for item in search_result.get("items", []):
+        found = search_result.get("items", [])
+        for item in found:
             vid = item.get("video_id", "")
             if vid and vid not in seen_ids:
                 seen_ids.add(vid)
                 items.append(item)
+        # Circuit-breaker: if the very first query returns nothing, the egress
+        # IP is almost certainly bot-walled — every remaining expanded query
+        # would also return 0 and only burn another yt-dlp timeout. Stop here
+        # and let the SC fallback in pipeline.py take over.
+        if idx == 0 and not found:
+            _log("First YouTube query empty — skipping remaining expanded queries (likely bot-walled)")
+            break
 
     # Sort merged results by views descending
     items.sort(key=lambda x: x.get("engagement", {}).get("views", 0), reverse=True)

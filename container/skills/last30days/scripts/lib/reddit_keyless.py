@@ -86,6 +86,17 @@ def _discover(topic: str, depth: str, subreddits: Optional[List[str]]) -> List[D
         f"{'listing discovery ' + str(len(listing_posts)) if subreddits else 'score-only'}; "
         f"{len(score_source)} scored cards"
     )
+    # A3: surface — never silently — the case where RSS breadth came back but
+    # no listing card backfilled a score. Those posts carry score=0 and (under
+    # strict_recent freshness) are very likely dropped downstream, so Reddit
+    # effectively contributes nothing this run. Make that visible instead of
+    # letting it look like Reddit was simply quiet.
+    if len(rss_posts) > 10 and not score_source:
+        _log(
+            "[Reddit] Disabled this run, scoring threshold not met "
+            f"({len(rss_posts)} RSS posts, 0 scored cards — posts carry score=0 "
+            "and are likely dropped by strict_recent freshness)"
+        )
 
     # Score lookup by post id, from the scored listing cards.
     score_map: Dict[str, Dict[str, int]] = {}

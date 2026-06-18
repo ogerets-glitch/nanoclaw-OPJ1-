@@ -63,7 +63,14 @@ SEARCH_ALIAS = {
     "xquik": "xquik",
 }
 
-MAX_SOURCE_FETCHES: dict[str, int] = {"x": 2}
+# Per-source fetch budget across all subqueries. youtube/tiktok/instagram
+# ignore the per-subquery search_query and always fetch on `raw_topic`, so
+# fetching them once per subquery is pure duplication (identical query, identical
+# results) — and for youtube each fetch pays the yt-dlp bot-wall timeout plus
+# serial SC transcript fetches. Capping them at 1 eliminates the N-subquery
+# multiplier that was pushing the engine past the hosting sub-agent's soft
+# timeout before it could write its output file.
+MAX_SOURCE_FETCHES: dict[str, int] = {"x": 2, "youtube": 1, "tiktok": 1, "instagram": 1}
 
 MOCK_AVAILABLE_SOURCES = [
     "reddit",
