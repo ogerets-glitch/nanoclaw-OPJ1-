@@ -34,7 +34,11 @@ const CREATION_FILES = [
 ];
 
 describe('creation is provider-agnostic', () => {
-  for (const file of CREATION_FILES) {
+  // Fork note: this fork deletes unused channel adapters (discord, slack,
+  // whatsapp, imessage, teams) to keep container deps lean. Guard only the
+  // creation files actually present so the contract still holds for the
+  // channels we ship (telegram, signal) without failing on deleted ones.
+  for (const file of CREATION_FILES.filter((f) => fs.existsSync(path.join(repoRoot, f)))) {
     it(`${file} passes/parses no --provider flag`, () => {
       const src = read(file);
       expect(src).not.toContain("'--provider'");
