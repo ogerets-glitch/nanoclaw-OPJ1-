@@ -517,9 +517,30 @@ async function buildContainerArgs(
   args.push('-e', 'NO_PROXY=host.docker.internal,127.0.0.1,localhost');
   args.push('-e', 'no_proxy=host.docker.internal,127.0.0.1,localhost');
 
-  // Per-agent-group env overrides — applied after OneCLI so they win.
+  // Per-agent-group env overrides — applied after OneCLI so they win. A small
+  // denylist keeps a group's DB-stored env from clobbering the gateway's proxy
+  // and CA wiring (egress redirect / cert bypass). Operator-only write path
+  // today (ncl groups config update --env), but the guard makes a future
+  // agent-writable path safe. Legit per-group overrides (e.g. ANTHROPIC_BASE_URL)
+  // are unaffected.
   if (containerConfig.env) {
+    const PROXY_CERT_KEYS = new Set([
+      'HTTPS_PROXY',
+      'HTTP_PROXY',
+      'NO_PROXY',
+      'SSL_CERT_FILE',
+      'DENO_CERT',
+      'https_proxy',
+      'http_proxy',
+      'no_proxy',
+      'ssl_cert_file',
+      'deno_cert',
+    ]);
     for (const [key, value] of Object.entries(containerConfig.env)) {
+      if (PROXY_CERT_KEYS.has(key)) {
+        log.warn('Skipping proxy/cert key in per-group env override', { containerName, key });
+        continue;
+      }
       args.push('-e', `${key}=${value}`);
     }
   }
