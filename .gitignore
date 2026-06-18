@@ -50,3 +50,10 @@ container/ssh-keys/
 secrets/
 nanoclaw.pid
 node_modules_backup/
+.agents
+AGENTS.md
+
+# Internal working docs, never committed
+docs/maintainer-guide.md
+docs/drafts/
+forks.md
