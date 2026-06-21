@@ -34,7 +34,19 @@ import { registerChannelAdapter } from './channel-registry.js';
 import type { ChannelAdapter, ChannelSetup, InboundMessage, OutboundFile, OutboundMessage } from './adapter.js';
 
 const PLATFORM_PREFIX = 'deltachat:';
-const DELTACHAT_CHUNK_MAX = 2000;
+// Per-chunk character budget. Kept under deltachat-core's DC_DESIRED_TEXT_LEN
+// (3800 = 38 lines × 100 chars) so a single chunk is never display-truncated
+// with "[...] show full message" — which would break forwarding/copying.
+const DELTACHAT_CHUNK_MAX = 3000;
+// Per-chunk display-line budget. deltachat-core (src/tools.rs truncate_by_lines)
+// truncates the bubble once it exceeds DC_DESIRED_TEXT_LINES (38), where a
+// physical line counts as ceil(len / DELTACHAT_LINE_LEN) display-lines. Char
+// chunking alone misses this: many short lines blow past 38 long before 3000
+// chars. 34 leaves a small buffer under 38.
+const DELTACHAT_MAX_LINES = 34;
+// deltachat-core's DC_DESIRED_TEXT_LINE_LEN: a physical line longer than this
+// is counted as multiple display-lines by the truncation logic.
+const DELTACHAT_LINE_LEN = 100;
 // 200ms inter-chunk pacing matches simplex.ts — the deltachat-rpc-server
 // can take a burst, but recipients see chunks more reliably in order.
 const SEND_DELAY_MS = 200;
@@ -109,17 +121,76 @@ export function toAgentPath(hostPath: string, hostPrefix: string, agentPrefix: s
   return agentPrefix + hostPath.slice(hostPrefix.length);
 }
 
-export function chunkText(text: string, limit: number): string[] {
-  if (text.length <= limit) return [text];
-  const chunks: string[] = [];
-  let rest = text;
-  while (rest.length > limit) {
-    let splitAt = rest.lastIndexOf('\n', limit);
-    if (splitAt <= 0) splitAt = limit;
-    chunks.push(rest.slice(0, splitAt));
-    rest = rest.slice(splitAt).replace(/^\n/, '');
+/** Display-lines deltachat-core attributes to one physical line (no '\n'). */
+function displayLines(line: string): number {
+  return Math.max(1, Math.ceil(line.length / DELTACHAT_LINE_LEN));
+}
+
+/** Total display-lines of a (possibly multi-line) text. */
+function displayLineCount(text: string): number {
+  let n = 0;
+  for (const line of text.split('\n')) n += displayLines(line);
+  return n;
+}
+
+/**
+ * Break a single physical line (no '\n') into pieces that each fit the char
+ * budget and, when `maxLines` is set, the display-line budget. Prefers word
+ * boundaries; falls back to a hard cut for unbroken tokens (e.g. long URLs).
+ */
+function splitLongLine(line: string, limit: number, maxLines?: number): string[] {
+  const max = maxLines === undefined ? limit : Math.min(limit, maxLines * DELTACHAT_LINE_LEN);
+  if (line.length <= max) return [line];
+  const parts: string[] = [];
+  let rest = line;
+  while (rest.length > max) {
+    let cut = rest.lastIndexOf(' ', max);
+    if (cut <= 0) cut = max; // no word boundary in range → hard cut
+    parts.push(rest.slice(0, cut));
+    rest = rest.slice(cut).replace(/^ /, '');
   }
-  if (rest) chunks.push(rest);
+  if (rest) parts.push(rest);
+  return parts;
+}
+
+/**
+ * Split `text` into chunks Delta-Chat renders inline without the "[...] show
+ * full message" truncation (which breaks forwarding/copying). A chunk stays
+ * within `limit` characters and, when `maxLines` is given, `maxLines`
+ * display-lines. Splits prefer line boundaries; over-long single lines are
+ * broken at word boundaries with a hard cut as last resort.
+ *
+ * `maxLines` models Delta-Chat's display-line truncation specifically; it is
+ * optional so the same routine can serve channels without that limit (they
+ * omit it and only the character budget applies).
+ */
+export function chunkText(text: string, limit: number, maxLines?: number): string[] {
+  if (text.length <= limit && (maxLines === undefined || displayLineCount(text) <= maxLines)) {
+    return [text];
+  }
+  // 1. Reduce every physical line to atoms that each fit both budgets.
+  const atoms: string[] = [];
+  for (const line of text.split('\n')) {
+    atoms.push(...splitLongLine(line, limit, maxLines));
+  }
+  // 2. Greedily pack atoms (rejoined with '\n') into chunks within budget.
+  const chunks: string[] = [];
+  let cur = '';
+  let curLines = 0;
+  for (const atom of atoms) {
+    const atomLines = displayLines(atom);
+    const sep = cur === '' ? 0 : 1; // the '\n' that rejoins atoms
+    const fitsChars = cur.length + sep + atom.length <= limit;
+    const fitsLines = maxLines === undefined || curLines + atomLines <= maxLines;
+    if (cur !== '' && (!fitsChars || !fitsLines)) {
+      chunks.push(cur);
+      cur = '';
+      curLines = 0;
+    }
+    cur = cur === '' ? atom : cur + '\n' + atom;
+    curLines += atomLines;
+  }
+  if (cur !== '') chunks.push(cur);
   return chunks;
 }
 
@@ -572,7 +643,7 @@ function createDeltachatAdapter(config: DeltachatAdapterConfig): ChannelAdapter 
 
   async function sendText(chatId: number, text: string): Promise<void> {
     if (!dc || ourAccountId === null) return;
-    const chunks = chunkText(text, DELTACHAT_CHUNK_MAX);
+    const chunks = chunkText(text, DELTACHAT_CHUNK_MAX, DELTACHAT_MAX_LINES);
     for (let i = 0; i < chunks.length; i++) {
       try {
         await dc.rpc.miscSendMsg(ourAccountId, chatId, chunks[i]!, null, null, null, null);
