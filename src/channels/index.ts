@@ -12,3 +12,4 @@ import './cli.js';
 // source files remain on disk for reference but are no longer imported.
 import './simplex.js';
 import './deltachat.js';
+import './signal.js';
