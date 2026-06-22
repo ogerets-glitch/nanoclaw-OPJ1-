@@ -585,9 +585,16 @@ export class ClaudeProvider implements AgentProvider {
         } else if (message.type === 'system' && (message as { subtype?: string }).subtype === 'rate_limit_event') {
           yield { type: 'error', message: 'Rate limit', retryable: false, classification: 'quota' };
         } else if (message.type === 'system' && (message as { subtype?: string }).subtype === 'compact_boundary') {
+          // compact_boundary is a status signal, NOT a finished turn. Emitting
+          // it as a `result` ran its synthetic "Context compacted." text through
+          // the poll-loop's <message>-wrap validator: no envelope → sent===0 →
+          // false-positive "response was not delivered" nudge → the agent
+          // re-sent its previous reply (double/triple-send after every
+          // compaction). Yield `progress` instead — log-only, like
+          // task_notification below, so it never touches dispatch/validation.
           const meta = (message as { compact_metadata?: { pre_tokens?: number } }).compact_metadata;
           const detail = meta?.pre_tokens ? ` (${meta.pre_tokens.toLocaleString()} tokens compacted)` : '';
-          yield { type: 'result', text: `Context compacted${detail}.` };
+          yield { type: 'progress', message: `Context compacted${detail}.` };
         } else if (message.type === 'system' && (message as { subtype?: string }).subtype === 'task_notification') {
           const tn = message as { summary?: string };
           yield { type: 'progress', message: tn.summary || 'Task notification' };

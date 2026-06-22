@@ -438,6 +438,28 @@ describe('error result with no <message> envelope', () => {
   });
 });
 
+describe('compaction status signal (compact_boundary → progress)', () => {
+  it('a progress event must not nudge or deliver anything', async () => {
+    // Regression guard for the double/triple-send-after-compaction bug: the
+    // claude provider used to map the SDK's `compact_boundary` system event to
+    // a `result` carrying synthetic "Context compacted." text. That text has no
+    // <message> envelope, so the wrap validator fired a false-positive "was not
+    // delivered" nudge and the agent re-sent its previous reply. The fix yields
+    // `progress` instead — log-only, must never reach dispatch/validation.
+    // Paired with the "bare text result → nudge" test above, this pins the
+    // result-vs-progress distinction the fix turns on.
+    const { query, pushes } = makeResultQuery({
+      type: 'progress',
+      message: 'Context compacted (50,000 tokens compacted).',
+    });
+
+    await processQuery(query, ERR_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined);
+
+    expect(getUndeliveredMessages()).toHaveLength(0);
+    expect(pushes).toHaveLength(0);
+  });
+});
+
 describe('isCorruptionError', () => {
   it('matches the Docker Desktop macOS torn-read symptom', () => {
     expect(isCorruptionError('database disk image is malformed')).toBe(true);
