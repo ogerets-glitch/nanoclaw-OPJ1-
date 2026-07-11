@@ -1,0 +1,364 @@
+#!/bin/bash
+set -euo pipefail
+
+# pdf-reader — CLI wrapper around poppler-utils (pdftotext, pdfinfo),
+# qpdf (merge, split, rotate) and ghostscript (compress).
+# Provides extract, fetch, info, list, merge, split, rotate, compress commands.
+
+VERSION="1.1.0"
+
+usage() {
+  cat <<'USAGE'
+pdf-reader — Read, extract, and edit PDF files
+
+Usage:
+  pdf-reader extract <file> [--layout] [--pages N-M]
+  pdf-reader fetch <url> [filename]
+  pdf-reader info <file>
+  pdf-reader list
+  pdf-reader merge <out.pdf> <in1.pdf> <in2.pdf> [...]
+  pdf-reader split <file> [--pages N-M] [out.pdf]
+  pdf-reader rotate <file> <+90|-90|180> [--pages N-M] [out.pdf]
+  pdf-reader compress <file> [out.pdf]
+  pdf-reader help
+
+Commands:
+  extract   Extract text from a PDF file to stdout
+  fetch     Download a PDF from a URL and extract text
+  info      Show PDF metadata and file size
+  list      List all PDFs in current directory tree
+  merge     Merge multiple PDFs into one
+  split     Extract a page range, or split into single pages
+  rotate    Rotate pages by +90, -90 or 180 degrees
+  compress  Shrink a PDF via ghostscript (/ebook quality)
+  help      Show this help message
+
+Extract options:
+  --layout  Preserve original layout (tables, columns)
+  --pages   Page range to extract (e.g. 1-5, 3-3 for single page)
+USAGE
+}
+
+page_count() {
+  local count
+  count="$(pdfinfo "$1" 2>/dev/null | awk '/^Pages:/{print $2}')" || true
+  echo "${count:-?}"
+}
+
+check_file_exists() {
+  if [[ ! -f "$1" ]]; then
+    echo "Error: File not found: $1" >&2
+    exit 1
+  fi
+}
+
+cmd_extract() {
+  local file=""
+  local layout=false
+  local first_page=""
+  local last_page=""
+
+  # Parse arguments
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --layout)
+        layout=true
+        shift
+        ;;
+      --pages)
+        if [[ -z "${2:-}" ]]; then
+          echo "Error: --pages requires a range argument (e.g. 1-5)" >&2
+          exit 1
+        fi
+        local range="$2"
+        first_page="${range%-*}"
+        last_page="${range#*-}"
+        shift 2
+        ;;
+      -*)
+        echo "Error: Unknown option: $1" >&2
+        exit 1
+        ;;
+      *)
+        if [[ -z "$file" ]]; then
+          file="$1"
+        else
+          echo "Error: Unexpected argument: $1" >&2
+          exit 1
+        fi
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "$file" ]]; then
+    echo "Error: No file specified" >&2
+    echo "Usage: pdf-reader extract <file> [--layout] [--pages N-M]" >&2
+    exit 1
+  fi
+
+  check_file_exists "$file"
+
+  # Build pdftotext arguments
+  local args=()
+  if [[ "$layout" == true ]]; then
+    args+=(-layout)
+  fi
+  if [[ -n "$first_page" ]]; then
+    args+=(-f "$first_page")
+  fi
+  if [[ -n "$last_page" ]]; then
+    args+=(-l "$last_page")
+  fi
+
+  pdftotext ${args[@]+"${args[@]}"} "$file" -
+}
+
+cmd_fetch() {
+  local url="${1:-}"
+  local filename="${2:-}"
+
+  if [[ -z "$url" ]]; then
+    echo "Error: No URL specified" >&2
+    echo "Usage: pdf-reader fetch <url> [filename]" >&2
+    exit 1
+  fi
+
+  # Create temporary file
+  local tmpfile
+  tmpfile="$(mktemp /tmp/pdf-reader-XXXXXX.pdf)"
+  trap 'rm -f "$tmpfile"' EXIT
+
+  # Download
+  echo "Downloading: $url" >&2
+  if ! curl -sL -o "$tmpfile" "$url"; then
+    echo "Error: Failed to download: $url" >&2
+    exit 1
+  fi
+
+  # Verify PDF header
+  local header
+  header="$(head -c 4 "$tmpfile")"
+  if [[ "$header" != "%PDF" ]]; then
+    echo "Error: Downloaded file is not a valid PDF (header: $header)" >&2
+    exit 1
+  fi
+
+  # Save with name if requested
+  if [[ -n "$filename" ]]; then
+    cp "$tmpfile" "$filename"
+    echo "Saved to: $filename" >&2
+  fi
+
+  # Extract with layout
+  pdftotext -layout "$tmpfile" -
+}
+
+cmd_info() {
+  local file="${1:-}"
+
+  if [[ -z "$file" ]]; then
+    echo "Error: No file specified" >&2
+    echo "Usage: pdf-reader info <file>" >&2
+    exit 1
+  fi
+
+  check_file_exists "$file"
+
+  pdfinfo "$file"
+  echo ""
+  echo "File size:    $(du -h "$file" | cut -f1)"
+}
+
+cmd_list() {
+  local found=false
+
+  # Use globbing to find PDFs (globstar makes **/ match recursively)
+  shopt -s nullglob globstar
+
+  # Use associative array to deduplicate (*.pdf overlaps with **/*.pdf)
+  declare -A seen
+  for pdf in *.pdf **/*.pdf; do
+    [[ -v seen["$pdf"] ]] && continue
+    seen["$pdf"]=1
+    found=true
+
+    local pages="?"
+    local size
+    size="$(du -h "$pdf" | cut -f1)"
+
+    # Try to get page count from pdfinfo
+    if page_line="$(pdfinfo "$pdf" 2>/dev/null | grep '^Pages:')"; then
+      pages="$(echo "$page_line" | awk '{print $2}')"
+    fi
+
+    printf "%-60s %5s pages  %8s\n" "$pdf" "$pages" "$size"
+  done
+
+  if [[ "$found" == false ]]; then
+    echo "No PDF files found in current directory tree." >&2
+  fi
+}
+
+cmd_merge() {
+  local out="${1:-}"
+  shift || true
+
+  if [[ -z "$out" || $# -lt 2 ]]; then
+    echo "Error: merge needs an output file and at least two input files" >&2
+    echo "Usage: pdf-reader merge <out.pdf> <in1.pdf> <in2.pdf> [...]" >&2
+    exit 1
+  fi
+
+  local f
+  for f in "$@"; do
+    check_file_exists "$f"
+  done
+
+  qpdf --empty --pages "$@" -- "$out"
+  echo "Merged $# files into: $out ($(page_count "$out") pages)"
+}
+
+cmd_split() {
+  local file=""
+  local pages=""
+  local out=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --pages)
+        if [[ -z "${2:-}" ]]; then
+          echo "Error: --pages requires a range argument (e.g. 3-7)" >&2
+          exit 1
+        fi
+        pages="$2"
+        shift 2
+        ;;
+      -*)
+        echo "Error: Unknown option: $1" >&2
+        exit 1
+        ;;
+      *)
+        if [[ -z "$file" ]]; then
+          file="$1"
+        elif [[ -z "$out" ]]; then
+          out="$1"
+        else
+          echo "Error: Unexpected argument: $1" >&2
+          exit 1
+        fi
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "$file" ]]; then
+    echo "Error: No file specified" >&2
+    echo "Usage: pdf-reader split <file> [--pages N-M] [out.pdf]" >&2
+    exit 1
+  fi
+
+  check_file_exists "$file"
+
+  if [[ -n "$pages" ]]; then
+    out="${out:-${file%.pdf}-pages-${pages}.pdf}"
+    qpdf "$file" --pages . "$pages" -- "$out"
+    echo "Extracted pages $pages to: $out ($(page_count "$out") pages)"
+  else
+    local prefix="${out:-${file%.pdf}-page}"
+    prefix="${prefix%.pdf}"
+    qpdf --split-pages "$file" "${prefix}-%d.pdf"
+    echo "Split $(page_count "$file") pages into: ${prefix}-<n>.pdf"
+  fi
+}
+
+cmd_rotate() {
+  local file=""
+  local angle=""
+  local pages="1-z"
+  local out=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --pages)
+        if [[ -z "${2:-}" ]]; then
+          echo "Error: --pages requires a range argument (e.g. 1-3)" >&2
+          exit 1
+        fi
+        pages="$2"
+        shift 2
+        ;;
+      +90|-90|180)
+        angle="$1"
+        shift
+        ;;
+      -*)
+        echo "Error: Unknown option: $1" >&2
+        exit 1
+        ;;
+      *)
+        if [[ -z "$file" ]]; then
+          file="$1"
+        elif [[ -z "$out" ]]; then
+          out="$1"
+        else
+          echo "Error: Unexpected argument: $1" >&2
+          exit 1
+        fi
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "$file" || -z "$angle" ]]; then
+    echo "Error: rotate needs a file and an angle (+90, -90 or 180)" >&2
+    echo "Usage: pdf-reader rotate <file> <+90|-90|180> [--pages N-M] [out.pdf]" >&2
+    exit 1
+  fi
+
+  check_file_exists "$file"
+
+  out="${out:-${file%.pdf}-rotated.pdf}"
+  qpdf "$file" --rotate="${angle}:${pages}" -- "$out"
+  echo "Rotated pages $pages by $angle degrees: $out"
+}
+
+cmd_compress() {
+  local file="${1:-}"
+  local out="${2:-}"
+
+  if [[ -z "$file" ]]; then
+    echo "Error: No file specified" >&2
+    echo "Usage: pdf-reader compress <file> [out.pdf]" >&2
+    exit 1
+  fi
+
+  check_file_exists "$file"
+
+  out="${out:-${file%.pdf}-compressed.pdf}"
+  gs -q -dNOPAUSE -dBATCH -dSAFER -sDEVICE=pdfwrite \
+     -dPDFSETTINGS=/ebook -sOutputFile="$out" "$file"
+  echo "Compressed: $(du -h "$file" | cut -f1) -> $(du -h "$out" | cut -f1) ($out)"
+}
+
+# Main dispatch
+command="${1:-help}"
+shift || true
+
+case "$command" in
+  extract)  cmd_extract "$@" ;;
+  fetch)    cmd_fetch "$@" ;;
+  info)     cmd_info "$@" ;;
+  list)     cmd_list ;;
+  merge)    cmd_merge "$@" ;;
+  split)    cmd_split "$@" ;;
+  rotate)   cmd_rotate "$@" ;;
+  compress) cmd_compress "$@" ;;
+  help|--help|-h) usage ;;
+  version|--version|-v) echo "pdf-reader $VERSION" ;;
+  *)
+    echo "Error: Unknown command: $command" >&2
+    echo "Run 'pdf-reader help' for usage." >&2
+    exit 1
+    ;;
+esac

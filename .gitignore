@@ -24,6 +24,14 @@ groups/*
 *.keys.json
 .env
 .env*
+secrets/
+container/ssh-keys/
+*.pid
+
+# Wisdom-skill build inputs/outputs (raw sources + intermediates; the
+# committed skill payload is container/skills/wisdom/chunks/*.json)
+scripts/wisdom-build/raw/
+scripts/wisdom-build/parsed/
 
 # Temp files
 .tmp-*

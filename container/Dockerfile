@@ -18,9 +18,10 @@ ARG INSTALL_CJK_FONTS=false
 
 # Pin versions for reproducibility. Bump deliberately — unpinned installs mean
 # every rebuild silently picks up the latest and can break in lockstep across
-# all users. The global Node CLIs (claude-code, agent-browser, vercel) are
-# pinned in cli-tools.json so a skill can add one with a json-merge; Bun (the
-# runtime) is pinned here because it installs from a different source.
+# all users. The global Node CLIs (claude-code, agent-browser, vercel, plus the
+# OPJ1 provider CLIs opencode + codex) are pinned in cli-tools.json so a skill
+# can add one with a json-merge; Bun (the runtime) is pinned here because it
+# installs from a different source.
 ARG BUN_VERSION=1.3.12
 
 # ---- System dependencies -----------------------------------------------------
@@ -48,8 +49,23 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         ca-certificates \
         curl \
         git \
+        poppler-utils \
+        python3 \
+        libreoffice-core \
+        libreoffice-writer \
+        libreoffice-calc \
         tini \
         unzip \
+        # Media + PDF toolchain: qpdf/ghostscript back the pdf-reader skill's
+        # merge/split/rotate/compress commands; ffmpeg (audio/video) and
+        # imagemagick/python3-pil (images) enable ad-hoc media conversion;
+        # python3-pypdf for programmatic PDF work from Python.
+        ffmpeg \
+        ghostscript \
+        imagemagick \
+        python3-pil \
+        python3-pypdf \
+        qpdf \
     && if [ "$INSTALL_CJK_FONTS" = "true" ]; then \
         apt-get install -y --no-install-recommends fonts-noto-cjk; \
        fi \
@@ -68,6 +84,42 @@ ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 RUN curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}" && \
     install -m 0755 /root/.bun/bin/bun /usr/local/bin/bun && \
     rm -rf /root/.bun
+
+# ---- Python 3.12 (Standalone via uv) ----------------------------------------
+# Some Skills (e.g. last30days) require Python >=3.12 in their pyproject.toml.
+# Debian Bookworm ships 3.11; instead of mixing bookworm + trixie repos or
+# building from source, install uv and let it manage a standalone CPython 3.12.
+# python3 (3.11 from apt above) stays the system default for yt-dlp & Co.
+#
+# UV_PYTHON_INSTALL_DIR pins the install location to a world-readable path —
+# without it uv writes to $HOME/.local/share/uv/python, which is /root/... at
+# build time and unreadable by the non-root `node` user that runs the agent.
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv-python
+RUN curl -fsSL https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh && \
+    uv python install 3.12 && \
+    ln -s "$(uv python find 3.12)" /usr/local/bin/python3.12 && \
+    chmod -R a+rX /opt/uv-python && \
+    /usr/local/bin/python3.12 --version
+
+# ---- YouTube-Toolchain (yt-dlp + Deno) --------------------------------------
+# yt-dlp: standalone Python zipapp from official release (uses python3 from apt above)
+RUN curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+    -o /usr/local/bin/yt-dlp.real && chmod +x /usr/local/bin/yt-dlp.real
+
+# Deno: JS runtime for yt-dlp signature challenges. Modern YouTube (2026) requires
+# solving n-sig + player-JS challenges; yt-dlp uses Deno (or Bun) as runtime.
+# Node alone is NOT accepted by yt-dlp's EJS solver.
+RUN curl -fsSL https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip \
+    -o /tmp/deno.zip && \
+    unzip /tmp/deno.zip -d /usr/local/bin/ && \
+    chmod +x /usr/local/bin/deno && \
+    rm /tmp/deno.zip
+
+# yt-dlp wrapper: copies read-only mounted cookies from /workspace/extra to
+# writable /tmp (yt-dlp refreshes the cookie jar during use). Datacenter IPs
+# are blacklisted by YouTube; cookies from a throwaway logged-in account unblock.
+RUN printf '#!/bin/sh\nCOOKIES_SRC=/workspace/extra/youtube-cookies.txt\nCOOKIES_WORK=/tmp/youtube-cookies.txt\nif [ -r "$COOKIES_SRC" ]; then\n  cp "$COOKIES_SRC" "$COOKIES_WORK" 2>/dev/null && exec /usr/local/bin/yt-dlp.real --cookies "$COOKIES_WORK" "$@"\nfi\nexec /usr/local/bin/yt-dlp.real "$@"\n' > /usr/local/bin/yt-dlp && \
+    chmod +x /usr/local/bin/yt-dlp
 
 # ---- agent-runner deps -------------------------------------------------------
 # Deps are cached independently of CLI versions. Source is NOT baked in —

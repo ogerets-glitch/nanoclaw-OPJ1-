@@ -2,11 +2,18 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { query as sdkQuery, type HookCallback, type PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
+import { query as sdkQuery, type HookCallback, type PreCompactHookInput, type SessionStartHookInput } from '@anthropic-ai/claude-agent-sdk';
+
+// Regex shared by Pre/Post hooks to flag URLs that look like image files
+// based on their path/query. The PostToolUse sanitizer is the real safety
+// net (it inspects bytes/types), but blocking the call up front gives the
+// agent a clear instructional error so it switches to search_images.
+const IMAGE_URL_RE = /\.(jpe?g|png|gif|webp|bmp|tiff?|avif|heic|svg)(\?|#|$)/i;
 
 import { clearContainerToolInFlight, setContainerToolInFlight } from '../db/connection.js';
 import { TIMEZONE, formatLocalStamp } from '../timezone.js';
 import { registerProvider } from './provider-registry.js';
+import { redactSkillFulltexts, SESSION_START_COMPACT_DISCLAIMER } from './skill-redaction.js';
 import type { AgentProvider, AgentQuery, McpServerConfig, ProviderEvent, ProviderOptions, QueryInput } from './types.js';
 
 function log(msg: string): void {
@@ -168,6 +175,21 @@ const preToolUseHook: HookCallback = async (input) => {
       stopReason: `Tool '${toolName}' is not available in this environment — use the nanoclaw equivalent.`,
     } as unknown as ReturnType<HookCallback>;
   }
+  // Image-loop guard: WebFetch returns image-content-blocks for image URLs,
+  // and a single broken image poisons the history with permanent HTTP 400s
+  // ("Could not process image"). Block image-extension URLs up front so the
+  // agent reroutes via mcp__nanoclaw__search_images + download_image + send_file.
+  if (toolName === 'WebFetch') {
+    const url = typeof i.tool_input?.url === 'string' ? (i.tool_input.url as string) : '';
+    if (url && IMAGE_URL_RE.test(url)) {
+      log(`PreToolUse: blocked WebFetch on image URL ${url}`);
+      return {
+        decision: 'block',
+        stopReason:
+          'WebFetch loads images as content-blocks into the conversation history. A broken image bricks the session with permanent HTTP 400 errors. Use mcp__nanoclaw__search_images to find images, mcp__nanoclaw__download_image to fetch them to /workspace/agent/.image-cache/, then mcp__nanoclaw__send_file to deliver them to the user.',
+      } as unknown as ReturnType<HookCallback>;
+    }
+  }
   // Bash exposes its timeout via the tool_input.timeout field (ms). Any other
   // tool: no declared timeout.
   const declaredTimeoutMs =
@@ -180,13 +202,60 @@ const preToolUseHook: HookCallback = async (input) => {
   return { continue: true };
 };
 
-/** Clear in-flight tool on PostToolUse / PostToolUseFailure. */
-const postToolUseHook: HookCallback = async () => {
+/**
+ * Detects any image-content-block in a tool response payload, no matter how
+ * deeply it's wrapped. We don't trust the URL filter alone: redirects, CDN
+ * proxies, and `data:image/...` URIs can deliver image bytes through URLs
+ * that don't have an image extension.
+ */
+function containsImageBlock(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(containsImageBlock);
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    if (obj.type === 'image') return true;
+    return Object.values(obj).some(containsImageBlock);
+  }
+  return false;
+}
+
+/**
+ * Clear in-flight tool on PostToolUse / PostToolUseFailure. Also acts as
+ * the second line of defence against image-content-block injection: if a
+ * tool result contains any image block (e.g. WebFetch slipped past the
+ * URL regex), replace the output with a text marker so the bytes never
+ * enter the conversation history.
+ */
+const postToolUseHook: HookCallback = async (input) => {
   try {
     clearContainerToolInFlight();
   } catch (err) {
     log(`PostToolUse: failed to clear container_state: ${err instanceof Error ? err.message : String(err)}`);
   }
+
+  const i = input as { tool_name?: string; tool_response?: unknown };
+  const toolName = i.tool_name ?? '';
+  // Only walk the response for tools that can plausibly emit image blocks.
+  // Bash/Read/Edit/Glob/Grep/Todo* return text or JSON and would just
+  // burn cycles on every call otherwise.
+  const isImageRiskyTool =
+    toolName === 'WebFetch' || toolName === 'WebSearch' || toolName.startsWith('mcp__');
+  if (isImageRiskyTool && i.tool_response !== undefined && containsImageBlock(i.tool_response)) {
+    log(`PostToolUse: stripped image content from ${toolName} response`);
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PostToolUse',
+        updatedToolOutput: {
+          content: [
+            {
+              type: 'text',
+              text: `Image content stripped by nanoclaw to prevent invalid-image API loops. Use mcp__nanoclaw__search_images + mcp__nanoclaw__download_image + mcp__nanoclaw__send_file to deliver images to the user — those bytes never enter the conversation history.`,
+            },
+          ],
+        },
+      },
+    } as unknown as ReturnType<HookCallback>;
+  }
+
   return { continue: true };
 };
 
@@ -239,10 +308,72 @@ function archiveTranscriptFile(transcriptPath: string | undefined, sessionId: st
 function createPreCompactHook(assistantName?: string): HookCallback {
   return async (input) => {
     const preCompact = input as PreCompactHookInput;
+    const { transcript_path: transcriptPath } = preCompact;
+
+    // LOCAL PATCH (2026-05-08): Shrink skill bodies in the transcript BEFORE
+    // compaction so the SDK rebuilds its invoked-skills list from markers and
+    // the post-compact reminder block stays small. Failures here must never
+    // block archiving — log and continue.
+    if (transcriptPath && fs.existsSync(transcriptPath)) {
+      try {
+        const r = redactSkillFulltexts(transcriptPath);
+        if (r.redacted > 0) {
+          log(`PreCompact: redacted ${r.redacted}/${r.scanned} skill bodies, saved ${r.bytesSaved} bytes`);
+        }
+      } catch (err) {
+        log(`PreCompact: skill-fulltext redaction failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
     archiveTranscriptFile(preCompact.transcript_path, preCompact.session_id, assistantName);
     return {};
   };
 }
+
+// LOCAL PATCH (2026-05-08): SessionStart-Hook for source='compact' — injects a
+// disclaimer as additionalContext after every compaction so the model treats
+// the post-compact "skills invoked"-block as historical, even if the
+// PreCompact-redaction missed an edge case. See skill-redaction.ts for the
+// full rationale.
+const sessionStartHook: HookCallback = async (input) => {
+  const session = input as SessionStartHookInput;
+  if (session.source !== 'compact') {
+    return { continue: true };
+  }
+  return {
+    continue: true,
+    hookSpecificOutput: {
+      hookEventName: 'SessionStart',
+      additionalContext: SESSION_START_COMPACT_DISCLAIMER,
+    },
+  } as unknown as ReturnType<HookCallback>;
+};
+
+/**
+ * On SessionEnd, wipe the per-agent image cache so we don't leak disk
+ * space across sessions. The directory lives under /workspace/agent (the
+ * group's persistent volume), so without explicit cleanup it would grow
+ * unbounded.
+ */
+const sessionEndHook: HookCallback = async () => {
+  const cacheDir = '/workspace/agent/.image-cache';
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(cacheDir);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { continue: true };
+    log(`SessionEnd: image-cache readdir failed: ${err instanceof Error ? err.message : String(err)}`);
+    return { continue: true };
+  }
+  for (const entry of entries) {
+    try {
+      fs.rmSync(path.join(cacheDir, entry), { recursive: true, force: true });
+    } catch {
+      /* best-effort */
+    }
+  }
+  return { continue: true };
+};
 
 // ── Continuation rotation (cold-resume guard) ──
 
@@ -418,6 +549,7 @@ export class ClaudeProvider implements AgentProvider {
         effort: this.effort as any,
         permissionMode: 'bypassPermissions',
         allowDangerouslySkipPermissions: true,
+        thinking: { type: 'adaptive' as const },
         settingSources: ['project', 'user', 'local'],
         mcpServers: this.mcpServers,
         hooks: {
@@ -425,6 +557,8 @@ export class ClaudeProvider implements AgentProvider {
           PostToolUse: [{ hooks: [postToolUseHook] }],
           PostToolUseFailure: [{ hooks: [postToolUseHook] }],
           PreCompact: [{ hooks: [createPreCompactHook(this.assistantName)] }],
+          SessionStart: [{ hooks: [sessionStartHook] }],
+          SessionEnd: [{ hooks: [sessionEndHook] }],
         },
       },
     });
@@ -455,9 +589,16 @@ export class ClaudeProvider implements AgentProvider {
         } else if (message.type === 'rate_limit_event') {
           yield { type: 'error', message: 'Rate limit', retryable: false, classification: 'quota' };
         } else if (message.type === 'system' && (message as { subtype?: string }).subtype === 'compact_boundary') {
+          // compact_boundary is a status signal, NOT a finished turn. Emitting
+          // it as a `result` ran its synthetic "Context compacted." text through
+          // the poll-loop's <message>-wrap validator: no envelope → sent===0 →
+          // false-positive "response was not delivered" nudge → the agent
+          // re-sent its previous reply (double/triple-send after every
+          // compaction). Yield `progress` instead — log-only, like
+          // task_notification below, so it never touches dispatch/validation.
           const meta = (message as { compact_metadata?: { pre_tokens?: number } }).compact_metadata;
           const detail = meta?.pre_tokens ? ` (${meta.pre_tokens.toLocaleString()} tokens compacted)` : '';
-          yield { type: 'result', text: `Context compacted${detail}.` };
+          yield { type: 'progress', message: `Context compacted${detail}.` };
         } else if (message.type === 'system' && (message as { subtype?: string }).subtype === 'task_notification') {
           const tn = message as { summary?: string };
           yield { type: 'progress', message: tn.summary || 'Task notification' };

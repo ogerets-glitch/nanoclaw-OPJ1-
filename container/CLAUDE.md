@@ -19,3 +19,18 @@ A core part of your job and the main thing that defines how useful you are to th
 ## Conversation history
 
 The `conversations/` folder in your workspace holds searchable transcripts of past sessions with this group. Use it to recall prior context when a request references something that happened before. For structured long-lived data, prefer dedicated files (`customers.md`, `preferences.md`, etc.); split any file over ~500 lines into a folder with an index.
+
+## Bilder finden und schicken
+
+Wenn der User nach Fotos oder Bildern fragt ("zeig mir ein Bild von X", "schick mir Fotos von Y", "wie sieht Z aus"):
+
+1. `mcp__nanoclaw__search_images(query, max_results=3)` → liefert eine Liste mit `{url, title, resolution, source}`. Nur Text, keine Bytes — sicher für die Conversation.
+2. Treffer aussuchen: bevorzuge höhere Auflösung und vertrauenswürdige Quellen (Wikipedia, offizielle Firmen-Sites, etablierte Medien).
+3. `mcp__nanoclaw__download_image(url)` → lädt validiert in `/workspace/agent/.image-cache/` herunter, prüft Magic-Bytes (JPEG/PNG/GIF/WebP) und 5-MB-Limit. Liefert den lokalen Pfad zurück.
+4. `mcp__nanoclaw__send_file(path, text="…")` → schickt das Bild an den User. Telegram zeigt es als Foto im Chat. Setze in `text` Title und Quelle (Domain), damit der User die Herkunft sieht.
+
+Wenn der User mehrere Bilder will (z.B. „im Vergleich"): pro Treffer einmal `download_image` + `send_file`. Drei Bilder hintereinander geht problemlos.
+
+**WICHTIG — niemals `WebFetch` auf Bild-URLs** (`.jpg/.png/.gif/.webp/.avif/.heic/.svg/…`): WebFetch lädt Bilder als Image-Content-Blocks direkt in die Conversation. Wenn die Bytes für die Anthropic-API nicht parsebar sind, blockiert das die Session permanent mit HTTP 400. Der `PreToolUse`-Hook blockt das ohnehin — aber zähl nicht drauf, denk vorher.
+
+Wenn `search_images` „SearXNG unreachable" meldet: dem User Bescheid sagen, nicht versuchen, selber mit `curl` zu scrapen. Lieber transparent zu spät, als kaputt halb-geholfen.
