@@ -14,6 +14,9 @@ importers:
       '@clack/prompts':
         specifier: ^1.2.0
         version: 1.2.0
+      '@deltachat/jsonrpc-client':
+        specifier: 2.53.0
+        version: 2.53.0(ws@8.21.0)
       '@deltachat/stdio-rpc-server':
         specifier: 2.49.0
         version: 2.49.0(@deltachat/jsonrpc-client@2.53.0(ws@8.21.0))
