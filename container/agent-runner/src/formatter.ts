@@ -133,7 +133,12 @@ export function extractRouting(messages: MessageInRow[]): RoutingContext {
  * Strips routing fields — the agent never sees platform_id, channel_type, thread_id.
  */
 export function formatMessages(messages: MessageInRow[]): string {
-  const header = `<context timezone="${escapeXml(TIMEZONE)}" />\n`;
+  // now = prompt-build time, not task-schedule time. Restores the current-time
+  // anchor the agent needs to reason about elapsed time and late deliveries —
+  // dropped by an upstream refactor (dcfa12e), regressed twice in production
+  // (late-delivered cron tasks misclassified, wrong time-of-day stated).
+  const now = formatLocalTime(new Date().toISOString(), TIMEZONE);
+  const header = `<context timezone="${escapeXml(TIMEZONE)}" now="${escapeXml(now)}" />\n`;
   if (messages.length === 0) return header;
 
   // Group by kind
@@ -148,7 +153,7 @@ export function formatMessages(messages: MessageInRow[]): string {
     parts.push(formatChatMessages(chatMessages));
   }
   if (taskMessages.length > 0) {
-    parts.push(...taskMessages.map(formatTaskMessage));
+    parts.push(...taskMessages.map((m) => formatTaskMessage(m, now)));
   }
   if (webhookMessages.length > 0) {
     parts.push(...webhookMessages.map(formatWebhookMessage));
@@ -201,7 +206,7 @@ function originAttr(msg: MessageInRow): string {
   return '';
 }
 
-function formatTaskMessage(msg: MessageInRow): string {
+function formatTaskMessage(msg: MessageInRow, deliveredAt: string): string {
   const content = parseContent(msg.content);
   const from = originAttr(msg);
   const time = formatLocalTime(msg.timestamp, TIMEZONE);
@@ -210,7 +215,9 @@ function formatTaskMessage(msg: MessageInRow): string {
     parts.push('Script output:', JSON.stringify(content.scriptOutput, null, 2), '');
   }
   parts.push('Instructions:', content.prompt || '');
-  return `<task${from} time="${escapeXml(time)}">${parts.join('\n')}</task>`;
+  // deliveredAt distinguishes actual prompt-build/delivery time from `time`
+  // (the row's DB-insert timestamp) — late-delivered tasks are recognizable.
+  return `<task${from} time="${escapeXml(time)}" deliveredAt="${escapeXml(deliveredAt)}">${parts.join('\n')}</task>`;
 }
 
 function formatWebhookMessage(msg: MessageInRow): string {

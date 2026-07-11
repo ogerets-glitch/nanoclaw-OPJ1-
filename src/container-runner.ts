@@ -441,6 +441,24 @@ async function buildContainerArgs(
   // Environment — only vars read by code we don't own.
   // Everything NanoClaw-specific is in container.json (read by runner at startup).
   args.push('-e', `TZ=${TIMEZONE}`);
+  // Pass-through by name only (without `=value`) so the docker daemon picks
+  // the value from this process's env at spawn time. Keeps secret-bearing
+  // URLs (e.g. Google Calendar private-token URL) out of `ps auxf` cmdline.
+  if (process.env.CALENDAR_ICAL_URL) {
+    args.push('-e', 'CALENDAR_ICAL_URL');
+  }
+
+  // Forward extra env vars listed in SKILL_FORWARD_ENV (comma-separated names).
+  // Values are typically vault-managed dummies — the OneCLI gateway overwrites
+  // outbound auth headers with the real vault value, so the container-side
+  // value only needs to be truthy for skill-side provider detection.
+  const forwardList = (process.env.SKILL_FORWARD_ENV ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  for (const name of forwardList) {
+    if (process.env[name]) args.push('-e', name);
+  }
 
   // Provider-contributed env vars (e.g. XDG_DATA_HOME, OPENCODE_*, NO_PROXY).
   if (providerContribution.env) {
@@ -492,6 +510,44 @@ async function buildContainerArgs(
     throw new Error('OneCLI gateway not applied — refusing to spawn container without credentials');
   }
   log.info('OneCLI gateway applied', { containerName });
+
+  // LOCAL PATCH (2026-05-11): NO_PROXY for local Voice/STT services on the host.
+  // OneCLI sets HTTP_PROXY/HTTPS_PROXY so credentialed API calls (Anthropic,
+  // OpenAI, etc.) get routed through the vault, but skills that talk to
+  // host-side services (TTS-OpenAI on 8385, Piper on 8386, Whisper STT on
+  // 8384) end up tunneled through OneCLI, which doesn't know what to do with
+  // them. NO_PROXY whitelists the host so direct connections work. Applied
+  // after applyContainerConfig so it wins over any proxy env the gateway sets.
+  args.push('-e', 'NO_PROXY=host.docker.internal,127.0.0.1,localhost');
+  args.push('-e', 'no_proxy=host.docker.internal,127.0.0.1,localhost');
+
+  // Per-agent-group env overrides — applied after OneCLI so they win. A small
+  // denylist keeps a group's DB-stored env from clobbering the gateway's proxy
+  // and CA wiring (egress redirect / cert bypass). Operator-only write path
+  // today (ncl groups config update --env), but the guard makes a future
+  // agent-writable path safe. Legit per-group overrides (e.g. ANTHROPIC_BASE_URL)
+  // are unaffected.
+  if (containerConfig.env) {
+    const PROXY_CERT_KEYS = new Set([
+      'HTTPS_PROXY',
+      'HTTP_PROXY',
+      'NO_PROXY',
+      'SSL_CERT_FILE',
+      'DENO_CERT',
+      'https_proxy',
+      'http_proxy',
+      'no_proxy',
+      'ssl_cert_file',
+      'deno_cert',
+    ]);
+    for (const [key, value] of Object.entries(containerConfig.env)) {
+      if (PROXY_CERT_KEYS.has(key)) {
+        log.warn('Skipping proxy/cert key in per-group env override', { containerName, key });
+        continue;
+      }
+      args.push('-e', `${key}=${value}`);
+    }
+  }
 
   // Override entrypoint: run v2 entry point directly via Bun (no tsc, no stdin).
   args.push('--entrypoint', 'bash');

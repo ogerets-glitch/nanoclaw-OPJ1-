@@ -7,3 +7,6 @@
 // self-registration import below.
 
 import './cli.js';
+import './simplex.js';
+import './deltachat.js';
+import './signal.js';

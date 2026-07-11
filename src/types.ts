@@ -25,6 +25,7 @@ export interface ContainerConfigRow {
   packages_npm: string; // JSON: string[]
   additional_mounts: string; // JSON: AdditionalMountConfig[]
   cli_scope: string; // 'disabled' | 'group' | 'global'
+  env: string | null; // JSON: Record<string, string> | null — per-group env vars (LOCAL extension, no upstream equivalent)
   updated_at: string;
 }
 
