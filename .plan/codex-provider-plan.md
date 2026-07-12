@@ -200,21 +200,56 @@ updated_at: 2026-07-13
   former candidate; existing OPJ1 (Claude) DM roundtrip still works after
   the retag; new "OPJ1 Codex" chat gets a real Codex response after rewire.
 - status: Blocked
-- next_action: Two things must happen before asking Oliver for the
-  `:latest`-promotion confirmation: (1) the remote-HTTP-MCP handshake test
-  that Codex's cross-model review flagged as mandatory before promotion
-  (T2's SSRF/name-validator code path is so far only unit-tested — the
-  canary in T3 didn't exercise it) — run it against a throwaway group the
-  same way T3's canaries were run, not skipped this time; (2) optionally
-  fix the two Codex-provider skill-loading YAML errors found in T3
-  (`tiefensuche`, `wisdom`) so they don't silently fail once the permanent
-  Codex group is live — Oliver's call whether that blocks promotion or is
-  a fast-follow.
-- evidence: —
-- blocker: Waiting on the MCP-handshake test (see next_action), then a
-  fresh, explicit confirmation from Oliver before any `docker tag` /
-  production restart — this is a deliberate policy gate (destructive/
-  hard-to-reverse, affects all agent groups), not a technical blocker.
+- next_action: The remote-MCP-handshake test ran (2026-07-13, same isolated
+  canary methodology as T3) — it's a **partial pass**, see evidence. To get
+  a fully clean authenticated round-trip, Oliver needs to decide: (a)
+  accept the current partial evidence as sufficient (SSRF/name validation
+  + TOML/transport wiring confirmed, tool-level call not exercised), (b)
+  provision a OneCLI credential rule for a throwaway canary agent to reach
+  a real authenticated MCP target and re-run, or (c) point at a public,
+  unauthenticated MCP server instead. None of these were decided yet —
+  asked Oliver, awaiting reply. Separately, optionally fix the two
+  Codex-provider skill-loading YAML errors found in T3 (`tiefensuche`,
+  `wisdom`) so they don't silently fail once the permanent Codex group is
+  live — Oliver's call whether that blocks promotion or is a fast-follow.
+- evidence: MCP canary ("Codex MCP Canary", provider=codex, candidate
+  image, remote HTTP MCP server `rechtsrecherche` →
+  `https://rechtsrecherche.og-monschau.de/mcp` added via `ncl groups
+  config add-mcp-server`) spawned successfully. Confirmed working end to
+  end: `validateMcpHttpUrl` let the legitimate host through (no
+  false-positive SSRF block), `validateMcpServerName` accepted the clean
+  name, the config materialized into the container and Codex generated a
+  real TOML `[mcp_servers.rechtsrecherche]` section from it (proven by the
+  container log line `[agent-runner] Additional MCP server: rechtsrecherche
+  (https://rechtsrecherche.og-monschau.de/mcp)` and Codex's `rmcp` client
+  actually opening a real TLS connection to that exact host through the
+  OneCLI gateway, MITM-intercepted correctly). **Where it stopped:** the
+  gateway log shows `onecli_gateway::gateway::forward: credential not
+  found method=POST url=https://rechtsrecherche.og-monschau.de:443/mcp
+  status=403` — the gateway itself fail-closed because this brand-new
+  throwaway canary identity has no configured credential-injection rule
+  for that host (expected/correct security behavior, not a bug: OneCLI
+  denies-by-default for unmapped targets). The Codex `rmcp` client then
+  logged `worker quit with fatal: Transport channel closed, when
+  Deserialize(Error("data did not match any variant of untagged enum
+  JsonRpcMessage"...` — it tried to parse the gateway's 403 JSON error
+  body as a JSON-RPC frame instead of surfacing "MCP server returned 403"
+  cleanly. That's upstream `codex`/`rmcp` client behavior (not NanoClaw
+  code), noted for completeness, not something to fix here. Net result:
+  the specific security-relevant code (SSRF/name-injection validators,
+  TOML generation, gateway TLS/proxy wiring for MCP hosts) is verified
+  working; a full authenticated tool-call round-trip was not completed
+  because the test target needed per-agent credentials this throwaway
+  identity doesn't have. Cleaned up identically to T3 (container stopped
+  and confirmed absent, `ncl groups delete` + explicit `messaging-groups
+  delete`, on-disk dirs removed via exact paths); one more orphaned
+  OneCLI agent identity left in place per Oliver's standing choice from
+  T3. Service unaffected throughout (`NRestarts=0`).
+- blocker: Awaiting Oliver's decision on the three options above, then —
+  once T4's remaining prerequisites are settled — a fresh, explicit
+  confirmation from Oliver before any `docker tag` / production restart.
+  This is a deliberate policy gate (destructive/hard-to-reverse, affects
+  all agent groups), not a technical blocker.
 - rollback: `pre-codex-6547acea` tag still points at the untouched
   pre-promotion `:latest` image — re-tag back to it and restart to revert.
 - files: —
