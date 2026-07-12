@@ -1,3 +1,6 @@
+import fs from 'fs';
+import path from 'path';
+
 import { findByName, getAllDestinations, type DestinationEntry } from './destinations.js';
 import { getPendingMessages, markProcessing, markCompleted, markScriptSkipped, type MessageInRow } from './db/messages-in.js';
 import { hasIdenticalSend, writeMessageOut } from './db/messages-out.js';
@@ -527,6 +530,8 @@ export async function processQuery(
         } else {
           archivePrompts.shift();
         }
+      } else if (event.type === 'file') {
+        deliverHarnessFile(event.path, routing);
       }
     }
   } catch (err) {
@@ -574,6 +579,43 @@ function handleEvent(event: ProviderEvent, _routing: RoutingContext): void {
     case 'progress':
       log(`Progress: ${event.message}`);
       break;
+    case 'file':
+      log(`Harness file: ${event.path}`);
+      break;
+  }
+}
+
+/** Deliver a provider-generated file through the same outbox shape as send_file. */
+function deliverHarnessFile(filePath: string, routing: RoutingContext): void {
+  if (!routing.platformId || !routing.channelType) {
+    log(`Dropping harness file ${filePath}: batch has no reply destination`);
+    return;
+  }
+
+  try {
+    if (!fs.existsSync(filePath)) {
+      log(`Dropping harness file ${filePath}: file does not exist`);
+      return;
+    }
+
+    const id = generateId();
+    const filename = path.basename(filePath);
+    const outboxDir = path.join('/workspace/outbox', id);
+    fs.mkdirSync(outboxDir, { recursive: true });
+    fs.copyFileSync(filePath, path.join(outboxDir, filename));
+
+    const seq = writeMessageOut({
+      id,
+      in_reply_to: routing.inReplyTo,
+      kind: 'chat',
+      platform_id: routing.platformId,
+      channel_type: routing.channelType,
+      thread_id: routing.threadId,
+      content: JSON.stringify({ text: '', files: [filename] }),
+    });
+    log(`Delivered harness file #${seq} → ${routing.channelType}:${routing.platformId} (${filename})`);
+  } catch (err) {
+    log(`Failed to deliver harness file ${filePath}: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 

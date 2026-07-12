@@ -19,8 +19,7 @@ export type OpenCodeMcpRemote = {
 export type OpenCodeMcpEntry = OpenCodeMcpLocal | OpenCodeMcpRemote;
 
 /**
- * Map NanoClaw v2 MCP definitions (same shape as Claude Agent SDK) into
- * OpenCode config `mcp` field. Stdio-only until `McpServerConfig` gains remote.
+ * Map NanoClaw v2 MCP definitions into OpenCode's local/remote MCP union.
  */
 export function mcpServersToOpenCodeConfig(
   servers: Record<string, McpServerConfig> | undefined,
@@ -28,10 +27,19 @@ export function mcpServersToOpenCodeConfig(
   const out: Record<string, OpenCodeMcpEntry> = {};
   if (!servers) return out;
   for (const [name, cfg] of Object.entries(servers)) {
+    if (cfg.type === 'http') {
+      out[name] = {
+        type: 'remote',
+        url: cfg.url,
+        ...(cfg.headers && Object.keys(cfg.headers).length > 0 ? { headers: cfg.headers } : {}),
+        enabled: true,
+      };
+      continue;
+    }
     out[name] = {
       type: 'local',
-      command: [cfg.command, ...cfg.args],
-      ...(Object.keys(cfg.env).length > 0 ? { environment: cfg.env } : {}),
+      command: [cfg.command, ...(cfg.args ?? [])],
+      ...(cfg.env && Object.keys(cfg.env).length > 0 ? { environment: cfg.env } : {}),
       enabled: true,
     };
   }

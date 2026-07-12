@@ -56,4 +56,17 @@ describe('mcpServersToOpenCodeConfig', () => {
   it('returns empty record for undefined', () => {
     expect(mcpServersToOpenCodeConfig(undefined)).toEqual({});
   });
+
+  it('maps streamable HTTP servers to remote entries', () => {
+    expect(
+      mcpServersToOpenCodeConfig({
+        research: { type: 'http', url: 'https://mcp.example.test', headers: { Authorization: 'onecli-managed' } },
+      }).research,
+    ).toEqual({
+      type: 'remote',
+      url: 'https://mcp.example.test',
+      headers: { Authorization: 'onecli-managed' },
+      enabled: true,
+    });
+  });
 });

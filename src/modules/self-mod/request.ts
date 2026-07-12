@@ -13,6 +13,7 @@
  * verbatim through to shell exec on apply.
  */
 import { getAgentGroup } from '../../db/agent-groups.js';
+import { validateMcpHttpUrl, validateMcpServerName } from '../../container-config.js';
 import { log } from '../../log.js';
 import type { Session } from '../../types.js';
 import { notifyAgent, requestApproval } from '../approvals/index.js';
@@ -70,10 +71,26 @@ export async function handleAddMcpServer(content: Record<string, unknown>, sessi
     return;
   }
   const serverName = content.name as string;
-  const command = content.command as string;
-  if (!serverName || !command) {
-    notifyAgent(session, 'add_mcp_server failed: name and command are required.');
+  const command = content.command as string | undefined;
+  const url = content.url as string | undefined;
+  if (!serverName || Boolean(command) === Boolean(url)) {
+    notifyAgent(session, 'add_mcp_server failed: name and exactly one of command or url are required.');
     return;
+  }
+  try {
+    validateMcpServerName(serverName);
+  } catch (err) {
+    notifyAgent(session, `add_mcp_server failed: ${err instanceof Error ? err.message : String(err)}.`);
+    return;
+  }
+  let validatedUrl: string | undefined;
+  if (url) {
+    try {
+      validatedUrl = validateMcpHttpUrl(url);
+    } catch (err) {
+      notifyAgent(session, `add_mcp_server failed: ${err instanceof Error ? err.message : String(err)}.`);
+      return;
+    }
   }
   await requestApproval({
     session,
@@ -81,11 +98,11 @@ export async function handleAddMcpServer(content: Record<string, unknown>, sessi
     action: 'add_mcp_server',
     payload: {
       name: serverName,
-      command,
-      args: (content.args as string[]) || [],
-      env: (content.env as Record<string, string>) || {},
+      ...(validatedUrl
+        ? { type: 'http', url: validatedUrl, headers: (content.headers as Record<string, string>) || {} }
+        : { command, args: (content.args as string[]) || [], env: (content.env as Record<string, string>) || {} }),
     },
     title: 'Add MCP Request',
-    question: `Agent "${agentGroup.name}" is attempting to add a new MCP server:\n${serverName} (${command})`,
+    question: `Agent "${agentGroup.name}" is attempting to add a new MCP server:\n${serverName} (${validatedUrl ?? command})`,
   });
 }

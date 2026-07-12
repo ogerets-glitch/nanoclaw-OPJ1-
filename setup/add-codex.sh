@@ -64,11 +64,25 @@ emit_status() {
 log() { echo "[add-codex] $*" >&2; }
 
 # Idempotent: a complete install has the host provider file, the host barrel
-# import, and the Codex CLI in the container manifest. Any missing → (re)install.
+# import, and the Codex CLI pinned at the CURRENT version in the container
+# manifest. Any missing, or a stale version pin, → (re)install/(re)pin. A
+# plain presence check on '@openai/codex' would consider a prior, older pin
+# already installed and silently skip re-copying the payload and bumping the
+# version — this repo has hit exactly that (0.124.0 lingering unnoticed
+# despite a newer providers-branch payload landing at 0.138.0).
 need_install() {
   [ ! -f src/providers/codex.ts ] && return 0
   ! grep -q "^import './codex.js';" src/providers/index.ts 2>/dev/null && return 0
-  ! grep -q '@openai/codex' container/cli-tools.json 2>/dev/null && return 0
+  # Parse (not grep) the manifest: a text match on the version string alone
+  # would also match a substring or an unrelated field; this checks the
+  # actual pinned version of the @openai/codex entry.
+  node -e '
+    const fs = require("fs");
+    const [file, name, wantVersion] = process.argv.slice(1);
+    const tools = JSON.parse(fs.readFileSync(file, "utf8"));
+    const entry = tools.find((t) => t.name === name);
+    process.exit(entry && entry.version === wantVersion ? 0 : 1);
+  ' container/cli-tools.json "@openai/codex" "${CODEX_VERSION}" || return 0
   return 1
 }
 
@@ -95,17 +109,29 @@ if need_install; then
     grep -q "^import './codex.js';" "$b" || printf "import './codex.js';\n" >> "$b"
   done
 
-  log "Adding the Codex CLI to the container manifest (cli-tools.json)…"
-  # A json-merge: append { name, version } if absent. The Dockerfile installs
-  # every manifest entry via pinned `pnpm install -g` — no Dockerfile edit, no
-  # awk surgery. @openai/codex has no native postinstall, so no "onlyBuilt".
+  log "Adding/updating the Codex CLI pin in the container manifest (cli-tools.json)…"
+  # A json-merge: append { name, version } if absent, update the version in
+  # place if a stale pin already exists (need_install() above now treats a
+  # version mismatch as "needs install" too — without the update-in-place
+  # here, that would just re-copy the payload on every run without ever
+  # actually fixing the stale pin). The Dockerfile installs every manifest
+  # entry via pinned `pnpm install -g` — no Dockerfile edit, no awk surgery.
+  # @openai/codex has no native postinstall, so no "onlyBuilt".
   MANIFEST=container/cli-tools.json
   node -e '
     const fs = require("fs");
     const [file, name, version] = process.argv.slice(1);
     const tools = JSON.parse(fs.readFileSync(file, "utf8"));
-    if (!tools.some((t) => t.name === name)) {
+    const existing = tools.find((t) => t.name === name);
+    let changed = false;
+    if (!existing) {
       tools.push({ name, version });
+      changed = true;
+    } else if (existing.version !== version) {
+      existing.version = version;
+      changed = true;
+    }
+    if (changed) {
       const fmt = (t) =>
         "  { " +
         Object.entries(t).map(([k, v]) => JSON.stringify(k) + ": " + JSON.stringify(v)).join(", ") +

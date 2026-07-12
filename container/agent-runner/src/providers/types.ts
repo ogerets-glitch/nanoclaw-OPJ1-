@@ -103,11 +103,20 @@ export interface QueryInput {
   };
 }
 
-export interface McpServerConfig {
+export interface McpStdioServerConfig {
+  type?: 'stdio';
   command: string;
-  args: string[];
-  env: Record<string, string>;
+  args?: string[];
+  env?: Record<string, string>;
 }
+
+export interface McpHttpServerConfig {
+  type: 'http';
+  url: string;
+  headers?: Record<string, string>;
+}
+
+export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig;
 
 export interface AgentQuery {
   /** Push a follow-up message into the active query. */
@@ -134,6 +143,12 @@ export type ProviderEvent =
   | { type: 'result'; text: string | null; isError?: boolean }
   | { type: 'error'; message: string; retryable: boolean; classification?: string }
   | { type: 'progress'; message: string }
+  /**
+   * A file produced by the provider harness that the model will not deliver
+   * itself (for example a Codex-generated image). The poll loop copies it to
+   * the session outbox and delivers it to the batch's reply destination.
+   */
+  | { type: 'file'; path: string }
   /**
    * Liveness signal. Providers MUST yield this on every underlying SDK
    * event (tool call, thinking, partial message, anything) so the
