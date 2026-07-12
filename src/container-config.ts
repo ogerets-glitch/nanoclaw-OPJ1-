@@ -88,9 +88,7 @@ export function validateMcpHttpUrl(value: string): string {
     throw new Error('MCP URL must not contain credentials; use OneCLI-managed headers');
   }
   if (isDisallowedMcpHost(url.hostname)) {
-    throw new Error(
-      `MCP URL must not target ${url.hostname} — this host bypasses the OneCLI credential gateway`,
-    );
+    throw new Error(`MCP URL must not target ${url.hostname} — this host bypasses the OneCLI credential gateway`);
   }
   return url.toString();
 }
