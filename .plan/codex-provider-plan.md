@@ -57,9 +57,14 @@ updated_at: 2026-07-12
 - description: Run full verification, rebuild the container image, and prepare an isolated Codex canary without changing existing groups.
 - validation: pnpm run build && pnpm test && cd container/agent-runner && bun test
 - status: In Progress
-- next_action: Diagnose why OneCLI CLI 2.2.5 rejects the existing local-gateway
-  credential during `onecli auth login`. Do not ask Oliver to retry Codex device
-  pairing until `sudo -iu opj1claw onecli secrets list` succeeds. Then repeat
+- next_action: ONECLI_URL was ruled out as the cause (see evidence) — the
+  blocker is not "wrong endpoint". Next hypothesis: NanoClaw's ONECLI_API_KEY
+  is a scoped service/gateway token, not a personal OneCLI dashboard key, and
+  `onecli auth login`/`secrets list` require the latter. Needs either (a) a
+  root-level look at OneCLI's own user/agent records to confirm the key's
+  scope, or (b) Oliver obtaining a personal `oc_...` key from the OneCLI
+  dashboard. Do not ask Oliver to retry Codex device pairing until
+  `sudo -iu opj1claw onecli secrets list` succeeds. Then repeat
   `pnpm exec tsx setup/index.ts --step provider-auth codex`, verify the new
   `Codex` vault secret without exposing its value, and resume the production-
   equivalent Claude/Codex canaries against `codex-candidate-6547acea`. Do not
@@ -83,7 +88,11 @@ updated_at: 2026-07-12
   user. No service restart, DB mutation, group creation, wiring, `:latest`
   retag, or push occurred.
 - blocker: OneCLI CLI is not authenticated to the local gateway; the existing
-  NanoClaw service credential is not accepted by `onecli auth login`. Codex's
-  temporary login directory was deleted by the setup failure path, so device
-  pairing must be repeated only after OneCLI CLI access is repaired.
+  NanoClaw service credential is not accepted by `onecli auth login`. Tested
+  explicitly with `ONECLI_URL=http://127.0.0.1:10254` (correct local gateway
+  address, sourced from NanoClaw's own `.env`) — still `AUTH_REQUIRED`, so the
+  wrong-endpoint theory is ruled out. Working theory: the key is scoped for
+  gateway/proxy use only, not for CLI account operations. Codex's temporary
+  login directory was deleted by the setup failure path, so device pairing
+  must be repeated only after OneCLI CLI access is repaired.
 - rollback: Keep the previous image and remove or stop only the new canary group.
