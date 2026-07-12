@@ -1,8 +1,30 @@
 ---
 goal: Add a permanent Codex-backed NanoClaw research group alongside existing Claude groups, using OneCLI vault-only authentication and the existing remote MCP services.
 decisions: Reconcile the complete Codex v2 payload semantically rather than overwriting local code; model MCP servers as a backward-compatible stdio/HTTP union; use native Codex live web search first; deploy through an isolated canary group.
-open_questions: Resolved — Codex OpenAI vault secret exists (id dbf76e55-b92b-482b-a89d-df7b1ac70547, created via direct admin-key API call, bypassing the still-broken `onecli` CLI auth on `opj1claw`). Open: whether to actually repair `opj1claw`'s CLI auth long-term (not attempted, not needed for T3/T4) vs. leaving the CLI unauthenticated and using the admin-key-API pattern again for any future secret — that choice is deferred, not decided.
-constraints: No secrets in repository, logs, URLs, or chat; do not alter existing Claude groups; no push; no production service restart or interactive authentication without explicit confirmation; `:latest` promotion needs a fresh explicit confirmation separate from "continue the rollout" (T3 canary done, T4 promotion still gated).
+open_questions: (1) Resolved — Codex OpenAI vault secret exists (id
+  dbf76e55-b92b-482b-a89d-df7b1ac70547, created via direct admin-key API
+  call, bypassing the still-broken `onecli` CLI auth on `opj1claw`). Open:
+  whether to actually repair `opj1claw`'s CLI auth long-term (not
+  attempted, not needed for T3/T4) vs. leaving the CLI unauthenticated and
+  using the admin-key-API pattern again for any future secret — deferred,
+  not decided. (2) NEW, blocking T4, waiting on Oliver (asked
+  2026-07-13, no answer yet — resume here): the T4 MCP-handshake canary
+  hit a OneCLI gateway "credential not found" 403 (expected fail-closed
+  behavior, not a bug) because the throwaway test identity had no
+  credential rule for the external MCP host it was pointed at
+  (`rechtsrecherche.og-monschau.de`). Three options on the table, Oliver
+  to pick: (a) accept the partial evidence already gathered — SSRF/name
+  validation + TOML generation + gateway TLS/proxy wiring all confirmed
+  working, only the final authenticated tool-call wasn't exercised; (b)
+  provision a OneCLI credential rule for a throwaway canary agent (needs
+  either a working `onecli auth login` for `opj1claw`, still broken, or
+  reusing the narrowly-scoped admin-key-API workaround — constraint says
+  ask each time, so asked); (c) point the handshake test at a public,
+  unauthenticated MCP server instead and re-run. (3) Whether to fix the
+  two Codex-provider skill-loading YAML errors (`tiefensuche`, `wisdom`,
+  found in T3) before or after `:latest` promotion — Oliver's call, not
+  yet made.
+constraints: No secrets in repository, logs, URLs, or chat; do not alter existing Claude groups; no push; no production service restart or interactive authentication without explicit confirmation; `:latest` promotion needs a fresh explicit confirmation separate from "continue the rollout" (T3 canary done, T4 promotion still gated); admin-key-API workaround (used once for the Codex vault secret in T3) requires asking Oliver again each time before reuse, never standing authorization.
 updated_at: 2026-07-13
 ---
 
