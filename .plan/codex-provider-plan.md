@@ -1,7 +1,7 @@
 ---
 goal: Add a permanent Codex-backed NanoClaw research group alongside existing Claude groups, using OneCLI vault-only authentication and the existing remote MCP services.
 decisions: Reconcile the complete Codex v2 payload semantically rather than overwriting local code; model MCP servers as a backward-compatible stdio/HTTP union; use native Codex live web search first; deploy through an isolated canary group.
-open_questions: Device pairing and creation of the permanent group require Oliver's interactive approval after all code and canary prerequisites pass.
+open_questions: OneCLI CLI authentication against the local gateway is blocked because the existing NanoClaw ONECLI_API_KEY is rejected by `onecli auth login`; Claude Code must diagnose the gateway/CLI auth contract before repeating Codex device pairing.
 constraints: No secrets in repository, logs, URLs, or chat; do not alter existing Claude groups; no push; no production service restart or interactive authentication without explicit confirmation.
 updated_at: 2026-07-12
 ---
@@ -57,15 +57,33 @@ updated_at: 2026-07-12
 - description: Run full verification, rebuild the container image, and prepare an isolated Codex canary without changing existing groups.
 - validation: pnpm run build && pnpm test && cd container/agent-runner && bun test
 - status: In Progress
-- next_action: Candidate-tagged image build (`container/build.sh
-  codex-candidate-<commit>`), NOT `:latest` directly — a container-runner.ts
-  read confirmed every group without a custom image shares the `:latest` tag,
-  so a direct rebuild would make the existing Claude group's next wake the
-  unplanned first test of the new image. Rollback-tag the current production
-  image first. See `/root/.claude/plans/arbeitsauftrag-plan-file-handoff-tender-lark.md`
-  ("Anschlussauftrag: Codex-Gruppe live schalten") for the full, advisor- and
-  Codex-reviewed sequence — canary request + Claude-provider smoke test in
-  the candidate image, only then atomic retag to `:latest`.
-- evidence: —
-- blocker: Interactive device pairing and production-facing group operations require Oliver's confirmation.
+- next_action: Diagnose why OneCLI CLI 2.2.5 rejects the existing local-gateway
+  credential during `onecli auth login`. Do not ask Oliver to retry Codex device
+  pairing until `sudo -iu opj1claw onecli secrets list` succeeds. Then repeat
+  `pnpm exec tsx setup/index.ts --step provider-auth codex`, verify the new
+  `Codex` vault secret without exposing its value, and resume the production-
+  equivalent Claude/Codex canaries against `codex-candidate-6547acea`. Do not
+  promote `:latest` without a new explicit confirmation.
+- evidence: Code is committed locally at `906c2d1d` plus formatting follow-up
+  `6547acea`; working tree was clean before this handoff update. Full host suite
+  passed 798/798, runner suite passed 176/176, both TypeScript checks passed,
+  and candidate build completed successfully. Current production image
+  `nanoclaw-agent-v2-67315674:latest` remains unchanged at
+  `sha256:71d4ab4115e2`; rollback tag `pre-codex-6547acea` points to that same
+  image. Candidate `codex-candidate-6547acea` exists at
+  `sha256:609248a30a2b`. OneCLI CLI 2.2.5 (the `versions.json` pin) was installed
+  at `/home/opj1claw/.local/bin/onecli`, owner `opj1claw:opj1claw`, mode 0755;
+  it reaches gateway 1.41.0 and reports server status `ok`. The first Codex
+  device login succeeded at OpenAI but vault creation failed because the CLI
+  was missing. After installing it, `onecli secrets list` returned
+  `AUTH_REQUIRED`; Oliver then tried `onecli auth login`, but the existing
+  local NanoClaw gateway key was rejected. No key/token value was recorded.
+  A pre-existing ownership fault on `logs/setup.log` was also corrected from
+  `root:root` to `opj1claw:opj1claw` (0644), verified writable by the service
+  user. No service restart, DB mutation, group creation, wiring, `:latest`
+  retag, or push occurred.
+- blocker: OneCLI CLI is not authenticated to the local gateway; the existing
+  NanoClaw service credential is not accepted by `onecli auth login`. Codex's
+  temporary login directory was deleted by the setup failure path, so device
+  pairing must be repeated only after OneCLI CLI access is repaired.
 - rollback: Keep the previous image and remove or stop only the new canary group.
