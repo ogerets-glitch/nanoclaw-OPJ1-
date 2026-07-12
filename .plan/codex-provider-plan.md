@@ -1,7 +1,7 @@
 ---
 goal: Add a permanent Codex-backed NanoClaw research group alongside existing Claude groups, using OneCLI vault-only authentication and the existing remote MCP services.
 decisions: Reconcile the complete Codex v2 payload semantically rather than overwriting local code; model MCP servers as a backward-compatible stdio/HTTP union; use native Codex live web search first; deploy through an isolated canary group.
-open_questions: Resolved — `opj1claw`'s ONECLI_API_KEY is an agent-scoped token, not meant for `onecli auth login`; no fix needed, device pairing can proceed directly. Open: post-pairing vault-secret verification needs a root-side read via the admin key, which requires a fresh explicit go-ahead from Oliver when that moment comes (auto-mode classifier treats it as sensitive each time).
+open_questions: Resolved — Codex OpenAI vault secret exists (id dbf76e55-b92b-482b-a89d-df7b1ac70547, created via direct admin-key API call, bypassing the still-broken `onecli` CLI auth on `opj1claw`). Open: whether to actually repair `opj1claw`'s CLI auth long-term (not attempted, not needed for T3/T4) vs. leaving the CLI unauthenticated and using the admin-key-API pattern again for any future secret — that choice is deferred, not decided.
 constraints: No secrets in repository, logs, URLs, or chat; do not alter existing Claude groups; no push; no production service restart or interactive authentication without explicit confirmation.
 updated_at: 2026-07-12
 ---
@@ -57,19 +57,19 @@ updated_at: 2026-07-12
 - description: Run full verification, rebuild the container image, and prepare an isolated Codex canary without changing existing groups.
 - validation: pnpm run build && pnpm test && cd container/agent-runner && bun test
 - status: In Progress
-- next_action: Root cause confirmed (see evidence) — `opj1claw`'s
-  `onecli secrets list` blocker does not need to be fixed. Do NOT attempt
-  `onecli auth login` on the `opj1claw` account again — its ONECLI_API_KEY is
-  structurally the wrong credential type for that (agent token, not a
-  personal/admin key). Proceed directly to Codex device pairing
-  (`pnpm exec tsx setup/index.ts --step provider-auth codex`) when Oliver is
-  ready. Afterward, verifying the resulting `Codex` vault secret landed will
-  require reading `/api/secrets` on the local gateway as root — an action the
-  auto-mode classifier has twice flagged as credential exploration. Ask
-  Oliver again at that point for a fresh, specific go-ahead; do not treat
-  this note as standing authorization. Then resume the production-equivalent
-  Claude/Codex canaries against `codex-candidate-6547acea`. Do not promote
-  `:latest` without a new explicit confirmation.
+- next_action: Codex vault secret now exists (see evidence) — the
+  `onecli`-CLI auth path stays broken for `opj1claw` and does NOT need
+  fixing; it was bypassed, not repaired. Next: resume the production-
+  equivalent Claude/Codex canaries against `codex-candidate-6547acea`
+  (throwaway container, production-matching mounts/user/network/credential-
+  proxy flags, a real Codex request through the vaulted secret, plus a
+  Claude-provider smoke test in the same candidate image). Only after both
+  pass: atomic retag to `:latest`, immediately followed by testing both the
+  new Codex group and the existing Claude group. Do not promote `:latest`
+  without a new explicit confirmation (still applies). Do NOT reuse the
+  admin-key-via-raw-API pattern for anything beyond this one Codex secret
+  without asking Oliver again each time — it was approved narrowly, step by
+  step, not as a general tool.
 - evidence: Code is committed locally at `906c2d1d` plus formatting follow-up
   `6547acea`; working tree was clean before this handoff update. Full host suite
   passed 798/798, runner suite passed 176/176, both TypeScript checks passed,
@@ -88,19 +88,36 @@ updated_at: 2026-07-12
   `root:root` to `opj1claw:opj1claw` (0644), verified writable by the service
   user. No service restart, DB mutation, group creation, wiring, `:latest`
   retag, or push occurred.
-- blocker: none for device pairing itself — resolved as a non-issue. Root
-  cause found by inspecting (read-only, no values) `/root/.onecli/*.json`:
-  `admin-api-key.json` holds a single `apiKey` field (the real admin/
-  dashboard credential); `nanoclaw-v2-token.json` holds `agentId`,
-  `identifier: "nanoclaw-v2-opj1"`, `accessToken` — an agent-scoped token.
-  NanoClaw's `.env` `ONECLI_API_KEY` is the latter, which is why
-  `onecli auth login`/`secrets list` on `opj1claw` reject it with
-  `AUTH_REQUIRED` regardless of endpoint (`ONECLI_URL=127.0.0.1:10254` was
-  tested explicitly and still failed) — it was never meant to authenticate a
-  personal CLI session. `opj1claw`'s CLI auth does not need fixing; Codex's
-  temporary login directory being gone just means device pairing starts
-  fresh next time, same as any first run. Remaining open item: verifying the
-  post-pairing vault secret via the root admin key was parked at Oliver's
+- blocker: none — resolved. Root cause: `onecli auth login` and
+  `onecli secrets list/create` (the CLI) require a session established via
+  `onecli auth login`, which rejects both credentials available on this host
+  (NanoClaw's `ONECLI_API_KEY`, an agent-scoped token — wrong type; and
+  `/root/.onecli/admin-api-key.json`, rejected by the login endpoint
+  specifically with "invalid API key: the server rejected this key"). Read
+  the actual `/api/secrets` route source (`resolveApiAuth` →
+  `validateApiKey`, `/opt/onecli/apps/web/src/...`, NB: that local checkout
+  is stale at release 1.18.2 vs. the running `ghcr.io/onecli/onecli:1.41.0`,
+  so this was only used to understand auth *shape*, not trusted for exact
+  current schema) — the REST route validates the bearer token against the
+  `ApiKey` DB table directly, independent of the CLI's login-session
+  mechanism. Confirmed empirically (with a deliberately empty POST body,
+  Oliver ran the curl himself): the admin key authenticates fine against
+  `POST /api/secrets` (HTTP 400 body-validation error, not 401) even though
+  it fails `onecli auth login`. Used this to bypass the CLI entirely: ran
+  `codex login --device-auth` directly (not through the wrapper script) with
+  a controlled `CODEX_HOME` so the resulting `auth.json` survived instead of
+  being auto-deleted on the wrapper's failure path, then POSTed it straight
+  to `/api/secrets` with the admin key as Bearer token (`name: "Codex"`,
+  `type: "openai"` — accepted first try, no need for the `"generic"`
+  fallback — `hostPattern: "chatgpt.com"`, `value` = full `auth.json`
+  contents). Result: HTTP 201, secret id `dbf76e55-b92b-482b-a89d-df7b1ac70547`,
+  created `2026-07-12T21:18:05.343Z`. No secret value was ever printed to
+  a transcript or log — only the server's own redacted preview
+  (`"••••••••Z\"\n}"`) was shown. Temp `CODEX_HOME` dir removed after the
+  write. Each sensitive sub-step (reading the admin key file, the empty
+  test POST, the real write) was individually confirmed by Oliver before
+  execution — this plan file records what happened, not standing
+  authorization for future reuse of the same pattern.
   request (see next_action) — needs a fresh confirmation when device pairing
   actually runs, not before.
 - rollback: Keep the previous image and remove or stop only the new canary group.
