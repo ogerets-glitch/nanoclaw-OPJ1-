@@ -1,7 +1,7 @@
 ---
 goal: Add a permanent Codex-backed NanoClaw research group alongside existing Claude groups, using OneCLI vault-only authentication and the existing remote MCP services.
 decisions: Reconcile the complete Codex v2 payload semantically rather than overwriting local code; model MCP servers as a backward-compatible stdio/HTTP union; use native Codex live web search first; deploy through an isolated canary group.
-open_questions: OneCLI CLI authentication against the local gateway is blocked because the existing NanoClaw ONECLI_API_KEY is rejected by `onecli auth login`; Claude Code must diagnose the gateway/CLI auth contract before repeating Codex device pairing.
+open_questions: Resolved — `opj1claw`'s ONECLI_API_KEY is an agent-scoped token, not meant for `onecli auth login`; no fix needed, device pairing can proceed directly. Open: post-pairing vault-secret verification needs a root-side read via the admin key, which requires a fresh explicit go-ahead from Oliver when that moment comes (auto-mode classifier treats it as sensitive each time).
 constraints: No secrets in repository, logs, URLs, or chat; do not alter existing Claude groups; no push; no production service restart or interactive authentication without explicit confirmation.
 updated_at: 2026-07-12
 ---
@@ -57,18 +57,19 @@ updated_at: 2026-07-12
 - description: Run full verification, rebuild the container image, and prepare an isolated Codex canary without changing existing groups.
 - validation: pnpm run build && pnpm test && cd container/agent-runner && bun test
 - status: In Progress
-- next_action: ONECLI_URL was ruled out as the cause (see evidence) — the
-  blocker is not "wrong endpoint". Next hypothesis: NanoClaw's ONECLI_API_KEY
-  is a scoped service/gateway token, not a personal OneCLI dashboard key, and
-  `onecli auth login`/`secrets list` require the latter. Needs either (a) a
-  root-level look at OneCLI's own user/agent records to confirm the key's
-  scope, or (b) Oliver obtaining a personal `oc_...` key from the OneCLI
-  dashboard. Do not ask Oliver to retry Codex device pairing until
-  `sudo -iu opj1claw onecli secrets list` succeeds. Then repeat
-  `pnpm exec tsx setup/index.ts --step provider-auth codex`, verify the new
-  `Codex` vault secret without exposing its value, and resume the production-
-  equivalent Claude/Codex canaries against `codex-candidate-6547acea`. Do not
-  promote `:latest` without a new explicit confirmation.
+- next_action: Root cause confirmed (see evidence) — `opj1claw`'s
+  `onecli secrets list` blocker does not need to be fixed. Do NOT attempt
+  `onecli auth login` on the `opj1claw` account again — its ONECLI_API_KEY is
+  structurally the wrong credential type for that (agent token, not a
+  personal/admin key). Proceed directly to Codex device pairing
+  (`pnpm exec tsx setup/index.ts --step provider-auth codex`) when Oliver is
+  ready. Afterward, verifying the resulting `Codex` vault secret landed will
+  require reading `/api/secrets` on the local gateway as root — an action the
+  auto-mode classifier has twice flagged as credential exploration. Ask
+  Oliver again at that point for a fresh, specific go-ahead; do not treat
+  this note as standing authorization. Then resume the production-equivalent
+  Claude/Codex canaries against `codex-candidate-6547acea`. Do not promote
+  `:latest` without a new explicit confirmation.
 - evidence: Code is committed locally at `906c2d1d` plus formatting follow-up
   `6547acea`; working tree was clean before this handoff update. Full host suite
   passed 798/798, runner suite passed 176/176, both TypeScript checks passed,
@@ -87,12 +88,19 @@ updated_at: 2026-07-12
   `root:root` to `opj1claw:opj1claw` (0644), verified writable by the service
   user. No service restart, DB mutation, group creation, wiring, `:latest`
   retag, or push occurred.
-- blocker: OneCLI CLI is not authenticated to the local gateway; the existing
-  NanoClaw service credential is not accepted by `onecli auth login`. Tested
-  explicitly with `ONECLI_URL=http://127.0.0.1:10254` (correct local gateway
-  address, sourced from NanoClaw's own `.env`) — still `AUTH_REQUIRED`, so the
-  wrong-endpoint theory is ruled out. Working theory: the key is scoped for
-  gateway/proxy use only, not for CLI account operations. Codex's temporary
-  login directory was deleted by the setup failure path, so device pairing
-  must be repeated only after OneCLI CLI access is repaired.
+- blocker: none for device pairing itself — resolved as a non-issue. Root
+  cause found by inspecting (read-only, no values) `/root/.onecli/*.json`:
+  `admin-api-key.json` holds a single `apiKey` field (the real admin/
+  dashboard credential); `nanoclaw-v2-token.json` holds `agentId`,
+  `identifier: "nanoclaw-v2-opj1"`, `accessToken` — an agent-scoped token.
+  NanoClaw's `.env` `ONECLI_API_KEY` is the latter, which is why
+  `onecli auth login`/`secrets list` on `opj1claw` reject it with
+  `AUTH_REQUIRED` regardless of endpoint (`ONECLI_URL=127.0.0.1:10254` was
+  tested explicitly and still failed) — it was never meant to authenticate a
+  personal CLI session. `opj1claw`'s CLI auth does not need fixing; Codex's
+  temporary login directory being gone just means device pairing starts
+  fresh next time, same as any first run. Remaining open item: verifying the
+  post-pairing vault secret via the root admin key was parked at Oliver's
+  request (see next_action) — needs a fresh confirmation when device pairing
+  actually runs, not before.
 - rollback: Keep the previous image and remove or stop only the new canary group.
