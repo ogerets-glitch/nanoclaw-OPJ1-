@@ -2,8 +2,8 @@
 goal: Add a permanent Codex-backed NanoClaw research group alongside existing Claude groups, using OneCLI vault-only authentication and the existing remote MCP services.
 decisions: Reconcile the complete Codex v2 payload semantically rather than overwriting local code; model MCP servers as a backward-compatible stdio/HTTP union; use native Codex live web search first; deploy through an isolated canary group.
 open_questions: Resolved — Codex OpenAI vault secret exists (id dbf76e55-b92b-482b-a89d-df7b1ac70547, created via direct admin-key API call, bypassing the still-broken `onecli` CLI auth on `opj1claw`). Open: whether to actually repair `opj1claw`'s CLI auth long-term (not attempted, not needed for T3/T4) vs. leaving the CLI unauthenticated and using the admin-key-API pattern again for any future secret — that choice is deferred, not decided.
-constraints: No secrets in repository, logs, URLs, or chat; do not alter existing Claude groups; no push; no production service restart or interactive authentication without explicit confirmation.
-updated_at: 2026-07-12
+constraints: No secrets in repository, logs, URLs, or chat; do not alter existing Claude groups; no push; no production service restart or interactive authentication without explicit confirmation; `:latest` promotion needs a fresh explicit confirmation separate from "continue the rollout" (T3 canary done, T4 promotion still gated).
+updated_at: 2026-07-13
 ---
 
 ### T1: Reconcile Codex v2 provider payload
@@ -56,20 +56,11 @@ updated_at: 2026-07-12
 - location: /home/opj1claw/nanoclaw
 - description: Run full verification, rebuild the container image, and prepare an isolated Codex canary without changing existing groups.
 - validation: pnpm run build && pnpm test && cd container/agent-runner && bun test
-- status: In Progress
-- next_action: Codex vault secret now exists (see evidence) — the
-  `onecli`-CLI auth path stays broken for `opj1claw` and does NOT need
-  fixing; it was bypassed, not repaired. Next: resume the production-
-  equivalent Claude/Codex canaries against `codex-candidate-6547acea`
-  (throwaway container, production-matching mounts/user/network/credential-
-  proxy flags, a real Codex request through the vaulted secret, plus a
-  Claude-provider smoke test in the same candidate image). Only after both
-  pass: atomic retag to `:latest`, immediately followed by testing both the
-  new Codex group and the existing Claude group. Do not promote `:latest`
-  without a new explicit confirmation (still applies). Do NOT reuse the
-  admin-key-via-raw-API pattern for anything beyond this one Codex secret
-  without asking Oliver again each time — it was approved narrowly, step by
-  step, not as a general tool.
+- status: Completed
+- next_action: See T4 — `:latest` promotion + permanent group, blocked on
+  Oliver's fresh confirmation and (per the Codex cross-model review below)
+  a mandatory remote-MCP handshake test before that confirmation is asked
+  for.
 - evidence: Code is committed locally at `906c2d1d` plus formatting follow-up
   `6547acea`; working tree was clean before this handoff update. Full host suite
   passed 798/798, runner suite passed 176/176, both TypeScript checks passed,
@@ -120,4 +111,113 @@ updated_at: 2026-07-12
   authorization for future reuse of the same pattern.
   request (see next_action) — needs a fresh confirmation when device pairing
   actually runs, not before.
+
+  **Canary test executed 2026-07-13 (plan gated by advisor + Codex
+  cross-model review beforehand, both incorporated — see review notes
+  below).** Two fully isolated agent groups created via `ncl` against the
+  already-running production daemon (`Codex Canary` provider=codex,
+  `Claude Canary` provider=default), each with `image-tag` set to the
+  FULL image reference `nanoclaw-agent-v2-67315674:codex-candidate-6547acea`
+  (first attempt used just the tag suffix — Docker then tried to pull a
+  nonexistent top-level image `codex-candidate-6547acea:latest` and failed
+  with exit 125; corrected to the full `repo:tag` form, which is what
+  `container-runner.ts:556` expects verbatim). Each wired to its own
+  isolated `cli`-channel messaging_group (`cli:codex-canary` /
+  `cli:claude-canary` — never the reserved `cli:local` id) via the CLI
+  adapter's `to:{channelType,platformId}` admin-redirect feature, one
+  nonce test message each.
+  - **Codex canary: PASS.** Nonce `CANARY-CDX-9f2b7a` came back exactly in
+    `outbound.db`. Container log: `provider: codex`, real
+    `codex app-server` spawn, `poll-loop` turn completed. Running
+    container's `docker inspect --format '{{.Image}}'` == candidate image
+    ID (`sha256:609248a30a2b...`). OneCLI gateway log shows the actual
+    credentialed request, not just "gateway applied": WebSocket upgrade to
+    `chatgpt.com/backend-api/codex/responses`, `injections_applied=2`,
+    all forwarded requests `status=200`.
+  - **Claude canary (same candidate image): PASS.** Nonce
+    `CANARY-CLD-4e81c3` came back exactly. Container log showed one
+    `Error: Rate limit (retryable: false, quota)` line — investigated, not
+    a request failure: it's the SDK's `rate_limit_event` surfaced verbatim
+    by `container/agent-runner/src/providers/claude.ts:589-590` (usage-
+    threshold telemetry, not a failed call). Confirmed via the gateway
+    log: both real `POST /v1/messages?beta=true` calls for this session
+    returned `status=200`, `injections_applied=1`. Worth Oliver's
+    awareness (account nearing some usage threshold today), not a
+    code/image defect.
+  - **Non-blocking finding:** 2 skills (`tiefensuche`, `wisdom`) fail to
+    load under the Codex provider specifically — `codex_core::session`
+    logs `invalid YAML: mapping values are not allowed in this context`
+    for both `SKILL.md` files. Claude's skill loader tolerates whatever
+    is in those files; Codex's YAML parser is stricter. Not investigated
+    further (out of scope for the canary itself) — worth fixing before
+    the permanent Codex group goes live with those skills enabled, since
+    they'll silently fail to load for every Codex session otherwise.
+  - Cleanup: containers stopped and confirmed absent before any DB/disk
+    cleanup (both had `--rm`, so `docker stop` alone removed them).
+    `ncl groups delete` cascaded sessions/wirings/destinations/
+    container_configs but confirmed (by reading `removed{}` in its own
+    JSON output) it does NOT cascade the `messaging_groups` row — deleted
+    those two explicitly afterward (`ncl messaging-groups delete`).
+    On-disk `groups/codex-canary/`, `groups/claude-canary/` and both
+    `data/v2-sessions/<group-id>/` directories removed via exact recorded
+    paths (no globs). **Left as intentional residue, Oliver's explicit
+    choice:** the two OneCLI-side agent identities (`ensureAgent()`
+    creates one per agent-group UUID on first spawn) — `ncl groups delete`
+    doesn't touch OneCLI, and cleaning them up would need either the
+    narrowly-scoped admin-key-API workaround again (constraint says: ask
+    each time) or a working `onecli auth login` session for `opj1claw`
+    (still broken, unrelated to this task). Oliver chose to leave them —
+    dead identities, zero NanoClaw-side wiring, no secret exposure.
+    Production service unaffected throughout: `NRestarts=0` before,
+    during, and after.
+
+  **Plan review before execution:** `advisor` subagent + Codex (`gpt-5.2`,
+  read-only, high reasoning) both reviewed the canary plan and found real,
+  load-bearing gaps that were fixed before running anything: `platform_id`
+  must never be the reserved `local` id; the CLI adapter's `deliver()` is
+  a no-op for any other platform_id so the reply must be read from
+  `outbound.db`/logs, never awaited on the socket; `image-tag` must be
+  verified as actually persisted (and, per Codex, the *running container's
+  actual image ID* verified too — this caught the `repo:tag` mistake
+  above); test only against the already-running production daemon, never
+  a second instance (would hijack `cli.sock` and use the wrong `--user`);
+  `ncl groups delete` doesn't cascade `messaging_groups` or OneCLI agent
+  identities; a bare `outbound.db` row proves nothing since provider
+  errors are persisted the same way as successes — a nonce prompt plus
+  gateway-log corroboration was required instead.
 - rollback: Keep the previous image and remove or stop only the new canary group.
+
+### T4: Promote `:latest` and stand up the permanent Codex group
+- depends_on: [T3]
+- location: /home/opj1claw/nanoclaw
+- description: Atomically retag the candidate image to `:latest`, verify
+  the existing Claude production group still works after the swap, then
+  create the permanent "OPJ1 Codex" agent group and move the already-live
+  `deltachat:group:12` wiring (currently pointing at the Claude OPJ1
+  group, set up 2026-07-12 for the chat-scoped-routing fix verification)
+  from Claude OPJ1 onto the new Codex group.
+- validation: `docker inspect` the promoted `:latest` image ID matches the
+  former candidate; existing OPJ1 (Claude) DM roundtrip still works after
+  the retag; new "OPJ1 Codex" chat gets a real Codex response after rewire.
+- status: Blocked
+- next_action: Two things must happen before asking Oliver for the
+  `:latest`-promotion confirmation: (1) the remote-HTTP-MCP handshake test
+  that Codex's cross-model review flagged as mandatory before promotion
+  (T2's SSRF/name-validator code path is so far only unit-tested — the
+  canary in T3 didn't exercise it) — run it against a throwaway group the
+  same way T3's canaries were run, not skipped this time; (2) optionally
+  fix the two Codex-provider skill-loading YAML errors found in T3
+  (`tiefensuche`, `wisdom`) so they don't silently fail once the permanent
+  Codex group is live — Oliver's call whether that blocks promotion or is
+  a fast-follow.
+- evidence: —
+- blocker: Waiting on the MCP-handshake test (see next_action), then a
+  fresh, explicit confirmation from Oliver before any `docker tag` /
+  production restart — this is a deliberate policy gate (destructive/
+  hard-to-reverse, affects all agent groups), not a technical blocker.
+- rollback: `pre-codex-6547acea` tag still points at the untouched
+  pre-promotion `:latest` image — re-tag back to it and restart to revert.
+- files: —
+- executor: claude-code
+- reviewers: [advisor, codex]
+- updated_at: 2026-07-13
