@@ -263,6 +263,26 @@ updated_at: 2026-07-13
 - reviewers: [codex]
 - updated_at: 2026-07-13
 
+### F1: Rechtsrecherche + Location für Codex-Gruppe (Vault-Secrets)
+- depends_on: [T4a]
+- status: Completed
+- evidence: Zwei OneCLI-Vault-Secrets (type=generic, injectionConfig
+  {headerName:X-API-Key, valueFormat:"{value}"}, exakter hostPattern) via Admin-Key-API
+  angelegt — Rechtsrecherche id 8e540a22-0519-411b-8eba-1cb86f26a208 (host
+  rechtsrecherche.og-monschau.de), Location id 410f54ab-7ce1-485f-9cd9-fc4698635a27
+  (host owntracks-oliver.kozow.com). Werte aus groups/telegram_main/.mcp.json, nie
+  geloggt (nur redigierte Preview). Struktur per LIST-Endpoint identisch zu
+  OpenBrain/Arbeitsmarkt bestätigt (create-Response/GET-by-id zeigten injectionConfig
+  fälschlich null — Envelope-Quirk in 1.41.0). Dann rechtsrecherche +
+  location als url-only HTTP-MCP zur Codex-Gruppe a9e70f1c (jetzt 4 Server).
+  **Verifiziert (Olivers Nonce CDX-F1-9K2M, 16:30):** Gateway-Log agent="OPJ1 Codex"
+  beide neuen Hosts status=200 injections_applied=1 (owntracks 307→200 Trailing-Slash).
+  Location-Ergebnis bewusst nicht gelesen (PII), Gateway-Beweis genügt.
+- rollback: `ncl groups config remove-mcp-server` (rechtsrecherche/location) von a9e70f1c;
+  Secrets via Admin-Key-API DELETE /api/secrets/<id> (beide IDs oben).
+- executor: claude-code
+- updated_at: 2026-07-13
+
 ### T4: Promote `:latest` and stand up the permanent Codex group
 - depends_on: [T3]
 - location: /home/opj1claw/nanoclaw
