@@ -43,14 +43,14 @@ Die alte Torwächter-Regel ist abgeschafft (gültig ab 15.04.2026). **Jede Form 
 
 ## MCP-Werkzeuge
 
-Aktuell 15 Tools, gruppiert nach Funktion.
+Aktuell 21 Tools, gruppiert nach Funktion.
 
 ### Memory-Tools (kuratierte Einträge)
 
 | Tool | Zweck | Wichtige Parameter |
 |------|-------|---------------------|
-| `add_memory` | Neuer Eintrag. Wenn keine Tags übergeben werden, generiert der Server selbst welche via Ministral 3 (Auto-Metadaten). Wir setzen aber bewusst eigene Tags — kuratierte Tags sind verlässlicher als automatische. | `content` (Pflicht), `tags`, `author`, `visibility`, `source` |
-| `search_memory` | Hybrid-Suche mit Reranking. Trailing `/` im Tag = Prefix-Match. `full_content=False` liefert pro Treffer nur eine ~300-Zeichen-Vorschau (spart Kontext-Tokens). | `query` (Pflicht), `agent`, `tags` (AND-Filter), `limit`, `offset`, `full_content` |
+| `add_memory` | Neuer Eintrag. Wenn keine Tags übergeben werden, generiert der Server selbst welche via Ministral 3 (Auto-Metadaten). Wir setzen aber bewusst eigene Tags — kuratierte Tags sind verlässlicher als automatische. `supersedes=<id>` (seit Migration 005) löst einen bestehenden, aktuell gültigen Eintrag ab — der alte verschwindet aus normalen Suchen, bleibt aber über `include_invalidated=True`/`get_memory` abrufbar. Nutzen bei widersprüchlichen Fakten (z.B. "Swap 4 GB" → "Swap 8 GB"), nicht für gewöhnliche inhaltliche Updates (dafür `update_memory`). | `content` (Pflicht), `tags`, `author`, `visibility`, `source`, `supersedes` |
+| `search_memory` | Hybrid-Suche mit Reranking. Trailing `/` im Tag = Prefix-Match. `full_content=False` liefert pro Treffer nur eine ~300-Zeichen-Vorschau (spart Kontext-Tokens). `include_invalidated=True` zeigt auch durch `supersedes` abgelöste historische Fassungen (Default False). | `query` (Pflicht), `agent`, `tags` (AND-Filter), `limit`, `offset`, `full_content`, `include_invalidated` |
 | `get_memory` | Volltext + Metadaten eines einzelnen Eintrags per ID. Gegenstück zur Vorschau-Suche; kein Embedding-Call. | `memory_id` (Pflicht) |
 | `update_memory` | Partial-Update. Bei `content`-Änderung wird das Embedding neu generiert. | `id` (Pflicht), `content`, `tags`, `author`, `visibility` |
 | `reinforce_memory` | hit_count um 1 erhöhen — Verstärkungs-Signal für das Ranking. | `id` (Pflicht) |
@@ -76,7 +76,22 @@ Aktuell 15 Tools, gruppiert nach Funktion.
 | `get_stats` | Gesamt-Statistiken: Anzahl Memories/Documents/Chunks, Top-Collections. | keine |
 | `browse_recent` | Chronologische Memory-Ansicht (neueste zuerst). | `limit`, `offset` |
 | `get_top_memories` | Memories mit hoher hit_count (oft verstärkt). | `limit`, `min_hits` |
-| `get_stale_memories` | Memories, die seit N Monaten nicht abgerufen wurden — Kandidaten für Review/Löschung. | `months` (Default 6), `limit` |
+| `get_stale_memories` | Memories, die seit N Monaten nicht abgerufen wurden — Kandidaten für Review/Löschung. Seit 2026-07-07 wird `last_retrieved_at`/`retrieval_count` bei jeder Agent-Suche (`search_memory`, `search_unified`, `get_memory`) automatisch geschrieben — die Stale-Daten sind erst ab dann aussagekräftig. | `months` (Default 6), `limit` |
+| `search_unified` | Durchsucht memories UND Dokument-Chunks in einem Aufruf, fusioniert per Reranker. Erste Wahl für Wissensfragen, deren Antwort in Notizen ODER Dokumenten stehen könnte. | `query` (Pflicht), `limit`, `max_per_doc`, `collection`, `expand` |
+
+### Wartungs-Tools (Dedup mit Approval-Gate)
+
+| Tool | Zweck | Wichtige Parameter |
+|------|-------|---------------------|
+| `consolidate_preview` | Dry-Run: findet hochähnliche Memory-Paare (nur global sichtbare, aktuell gültige — Maintenance-Reports/workmem und invalidierte/historische Fassungen ausgenommen). Schreibt NICHTS. | `sim_threshold` (Default 0.92), `limit`, `require_shared_entity` |
+| `consolidate_apply` | Führt vom Nutzer BESTÄTIGTE Merges transaktional aus. Quellen + Target-Pre-Image landen vorher vollständig in `memories_archive` (no-delete-without-replacement); entities-Links werden auf den vereinigten Personen-Stand nachgezogen. **Nur nach Olivers OK.** | `operations` (Liste aus `target_id`, `source_ids`, `merged_content`, optional `tags`/`visibility`), `dry_run` |
+
+### Entitäten-Tools (Personen — deterministisches Self-Wiring, Migration 006)
+
+| Tool | Zweck | Wichtige Parameter |
+|------|-------|---------------------|
+| `get_entity` | Steckbrief einer Person: alle global-sichtbaren Mentions (inkl. historischer, durch `supersedes` abgelöster Fassungen), case-insensitiver Namens-Lookup. Kein LLM-Call — die Daten stammen aus der ohnehin bei `add_memory` laufenden `personen`-Extraktion. Namensvarianten (z.B. "Oliver" vs. "Oliver Gerets") sind aktuell getrennte Entitäten, keine Fuzzy-Zusammenführung. | `name` (Pflicht) |
+| `list_entities` | Alle Personen mit Mention-Count (nur global-sichtbare Memories), absteigend sortiert. | `typ` (aktuell nur `'person'` befüllt), `limit` |
 
 ## Tagging-Protokoll vor jedem `add_memory`
 
@@ -118,8 +133,9 @@ Gefunden wird in OpenBrain über den *Inhalt* (semantisch + BM25 + Reranker) —
 ```
 content: "OpenBrain-Maintenance-Report — KW 24, 2026 …"
 tags:    ["Maintenance/Report", "KW-24-2026"]
+visibility: ["maintenance"]
 ```
-Beide sind Klasse/Stempel — man greift alle Reports bzw. die einer Woche als Stapel.
+Beide Tags sind Klasse/Stempel — man greift alle Reports bzw. die einer Woche als Stapel. **Maintenance-Reports IMMER mit `visibility=["maintenance"]` speichern (nicht `global`)** — sie sind Selbstverwaltungs-Protokolle, keine Wissens-Einträge; mit `global` dominieren sie das Dedup-Preview und verrauschen agent-gefilterte Suchen (Regel seit 2026-07-07, Bestand wurde umgeflaggt). Abrufbar bleiben sie via `search_memory(agent="maintenance")` oder `get_memory(id)`.
 
 **Gut — stabile Adresse eines benannten Artefakts:**
 ```
