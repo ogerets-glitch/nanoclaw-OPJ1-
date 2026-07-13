@@ -216,13 +216,10 @@ updated_at: 2026-07-13
   Codex-Research-Gruppe auf dem bereits gebauten Kandidaten-Image, ohne die riskante
   :latest-Promotion (die bleibt T4b, eigene Freigabe). Chat: bestehende Testgruppe
   deltachat:group:12 ("OPJ1 Codex") von Claude OPJ1 auf die neue Codex-Gruppe umgehängt.
-- status: In Progress
-- next_action: Schritt 5 (MCP-End-to-End-Verifikation) — Nonce-Testnachricht MUSS von
-  Oliver aus dem echten Deltachat kommen (strict-Policy verwirft CLI-Injektion eines
-  unbekannten Senders; bestätigt durch fehlendes Routing/Gate-Log). Prompt erzwingt
-  openbrain get_stats + arbeitsmarkt health. Dann verifizieren: Gateway-Log beide Hosts
-  injections_applied>=1 + status=200, Container-Image-ID 609248a30a2b, provider codex,
-  Antwort enthält beide Tool-Ergebnisse. Danach Schritt 6 (Skill-YAML-Fix tiefensuche/wisdom).
+- status: Completed
+- next_action: — (T4a fertig. Offen: T4b :latest-Promotion (eigene Freigabe) + F1
+  Rechtsrecherche/Location-Vault-Secrets. Codex-Skill-Fix beim nächsten Spawn final
+  bestätigen — Standard-YAML-Parse ist bereits grün.)
 - evidence: **Konkrete IDs.** Neue Agent-Gruppe "OPJ1 Codex" =
   a9e70f1c-4c4d-4fc6-be2f-db7e28007e58 (folder opj1-codex, provider=codex,
   image_tag=nanoclaw-agent-v2-67315674:codex-6547acea). Immutabler Image-Tag
@@ -239,7 +236,23 @@ updated_at: 2026-07-13
   **Zwischenfall (behoben):** git checkout lief als root → 668 getrackte Dateien root:root
   → sofort zurück-gechownt auf opj1claw (0 root-Dateien außerhalb .git/data/groups).
   Ab da alle Ops als opj1claw (sudo -u opj1claw).
-- blocker: none — wartet auf Olivers Nonce-Nachricht (Schritt 5).
+- **Schritt 5 VERIFIZIERT (2026-07-13 13:49, Olivers Nonce CDX-LIVE-7F3K):** Container
+  nanoclaw-v2-opj1-codex-… auf Image sha256:609248a30a2b, `provider: codex`. Zugestellte
+  Nachricht (messages_out, sess-1783943357051-spy626) enthält BEIDE dynamischen Tool-
+  Ergebnisse + Nonce: OpenBrain get_stats (memories 573, documents 132, chunks 24332,
+  volle Collection-Liste) UND Arbeitsmarkt health ({status/jobsuche/ausbildung/
+  weiterbildung/coaching = ok}) + CDX-LIVE-7F3K. OneCLI-Gateway-Log korreliert auf
+  agent="OPJ1 Codex" (agent_id b913da35): openbrain-oliver.kozow.com + arbeitsmarkt-
+  oliver.kozow.com je MITM POST .../mcp(/) status=200 injections_applied=1 (307→200 ist
+  der /mcp→/mcp/ Trailing-Slash-Redirect, den Codex' rmcp korrekt folgt). Kann nicht
+  falsch bestehen (beide Tools, dynamische Felder, kein Fehlertext).
+- **Schritt 6 (Skill-YAML) erledigt:** container/skills/{tiefensuche,wisdom}/SKILL.md —
+  `description`-Plain-Scalar mit unquotetem `: ` (tiefensuche „Zwei Modi: --guided",
+  wisdom „~540 Chunks): Sun Tzu") → in Single-Quotes gewrappt (Text wortgleich, für
+  Claude weiter valide). RO-Mount container/skills → /app/skills, greift beim nächsten
+  Spawn. Standard-YAML-Parse jetzt grün (yaml.safe_load); Codex-rmcp-Bestätigung folgt
+  beim nächsten Codex-Turn.
+- blocker: none — abgeschlossen.
 - rollback: `ncl groups delete a9e70f1c…` (+ messaging_groups-Zeile bleibt, group12 gehört
   Oliver, NICHT löschen; Wiring/Destination aus data/v2.db.bak-1783942207 zurück); alte
   Wiring/Destination auf Claude OPJ1 (ag-1777053973937-w5v230) rekonstruieren:

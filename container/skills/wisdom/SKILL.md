@@ -1,6 +1,6 @@
 ---
 name: wisdom
-description: Semantische Suche in klassischen Weisheits-Texten — findet thematisch passende Stellen zu einer Frage oder Lebenslage, auch wenn die genauen Worte nicht im Text stehen. Aktuell indiziert (drei Korpora, ~540 Chunks): Sun Tzu "The Art of War" englisch (Giles 1910), Sun Tzu "Die Kunst des Krieges" deutsch (Clavell-Edition nach Giles), I Ging "Buch der Wandlungen" deutsch (Wilhelm 1923). Triggert bei "/wisdom <frage>", "was sagt Sun Tzu zu …", "was sagt das I Ging zu …", "Hexagramm zu …", "strategische / daoistische Sicht auf …" oder allgemein wenn jemand klassischen Rat sucht. Cross-lingual via bge_multilingual_gemma2.
+description: 'Semantische Suche in klassischen Weisheits-Texten — findet thematisch passende Stellen zu einer Frage oder Lebenslage, auch wenn die genauen Worte nicht im Text stehen. Aktuell indiziert (drei Korpora, ~540 Chunks): Sun Tzu "The Art of War" englisch (Giles 1910), Sun Tzu "Die Kunst des Krieges" deutsch (Clavell-Edition nach Giles), I Ging "Buch der Wandlungen" deutsch (Wilhelm 1923). Triggert bei "/wisdom <frage>", "was sagt Sun Tzu zu …", "was sagt das I Ging zu …", "Hexagramm zu …", "strategische / daoistische Sicht auf …" oder allgemein wenn jemand klassischen Rat sucht. Cross-lingual via bge_multilingual_gemma2.'
 allowed-tools:
   - Bash(bun run /app/skills/wisdom/wisdom.ts:*)
 ---
