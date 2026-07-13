@@ -209,6 +209,47 @@ updated_at: 2026-07-13
   gateway-log corroboration was required instead.
 - rollback: Keep the previous image and remove or stop only the new canary group.
 
+### T4a: Permanente OPJ1-Codex-Gruppe auf Kandidaten-Image (ohne :latest-Promotion)
+- depends_on: [T3]
+- location: /home/opj1claw/nanoclaw (Branch chore/codex-canary-t3)
+- description: Refinement von T4 (Entkopplung, mit Oliver abgestimmt) — permanente
+  Codex-Research-Gruppe auf dem bereits gebauten Kandidaten-Image, ohne die riskante
+  :latest-Promotion (die bleibt T4b, eigene Freigabe). Chat: bestehende Testgruppe
+  deltachat:group:12 ("OPJ1 Codex") von Claude OPJ1 auf die neue Codex-Gruppe umgehängt.
+- status: In Progress
+- next_action: Schritt 5 (MCP-End-to-End-Verifikation) — Nonce-Testnachricht MUSS von
+  Oliver aus dem echten Deltachat kommen (strict-Policy verwirft CLI-Injektion eines
+  unbekannten Senders; bestätigt durch fehlendes Routing/Gate-Log). Prompt erzwingt
+  openbrain get_stats + arbeitsmarkt health. Dann verifizieren: Gateway-Log beide Hosts
+  injections_applied>=1 + status=200, Container-Image-ID 609248a30a2b, provider codex,
+  Antwort enthält beide Tool-Ergebnisse. Danach Schritt 6 (Skill-YAML-Fix tiefensuche/wisdom).
+- evidence: **Konkrete IDs.** Neue Agent-Gruppe "OPJ1 Codex" =
+  a9e70f1c-4c4d-4fc6-be2f-db7e28007e58 (folder opj1-codex, provider=codex,
+  image_tag=nanoclaw-agent-v2-67315674:codex-6547acea). Immutabler Image-Tag
+  codex-6547acea → sha256:609248a30a2b (== Kandidat; :latest unangetastet 71d4ab4115e2;
+  Rollback-Tag pre-codex-6547acea zeigt auf :latest). MCP: openbrain
+  (https://openbrain-oliver.kozow.com/mcp) + arbeitsmarkt
+  (https://arbeitsmarkt-oliver.kozow.com/mcp), beide type=http URL-only (Gateway
+  injiziert). Rechtsrecherche+Location aufgeschoben (F1). Wiring atomar nicht möglich
+  (agent-group-id nicht updatable) → neue Wiring 1b42f36e-c091-4cbc-b660-abb558febb33
+  (group12→Codex, Felder geklont: pattern/./all/drop/shared/prio0) angelegt, alte Wiring
+  c9275b31 gelöscht → genau eine Wiring für group12. Destination: Codex→group12 (opj1-codex)
+  angelegt, alte Claude-OPJ1-Destination→group12 entfernt (Claude behält 6 andere,
+  unbeschädigt). DB-Backup: data/v2.db.bak-1783942207.
+  **Zwischenfall (behoben):** git checkout lief als root → 668 getrackte Dateien root:root
+  → sofort zurück-gechownt auf opj1claw (0 root-Dateien außerhalb .git/data/groups).
+  Ab da alle Ops als opj1claw (sudo -u opj1claw).
+- blocker: none — wartet auf Olivers Nonce-Nachricht (Schritt 5).
+- rollback: `ncl groups delete a9e70f1c…` (+ messaging_groups-Zeile bleibt, group12 gehört
+  Oliver, NICHT löschen; Wiring/Destination aus data/v2.db.bak-1783942207 zurück); alte
+  Wiring/Destination auf Claude OPJ1 (ag-1777053973937-w5v230) rekonstruieren:
+  wiring group12→Claude + destination opj1-codex→group12. `docker rmi …:codex-6547acea`.
+  Kein :latest/Service-Neustart berührt.
+- files: DB (data/v2.db), Docker-Tags. Kein getrackter Code geändert.
+- executor: claude-code
+- reviewers: [codex]
+- updated_at: 2026-07-13
+
 ### T4: Promote `:latest` and stand up the permanent Codex group
 - depends_on: [T3]
 - location: /home/opj1claw/nanoclaw
