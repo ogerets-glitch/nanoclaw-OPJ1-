@@ -283,7 +283,24 @@ updated_at: 2026-07-13
 - executor: claude-code
 - updated_at: 2026-07-13
 
-### T4: Promote `:latest` and stand up the permanent Codex group
+### T4b: `:latest`-Promotion (Kandidaten-Image als Default für alle Gruppen)
+- depends_on: [T4a, F1]
+- status: Completed
+- evidence: `docker tag …:codex-6547acea …:latest` (atomarer Retag) — `:latest` jetzt
+  sha256:609248a30a2b (vorher 71d4ab4115e2). Rollback-Tag pre-codex-6547acea unverändert
+  71d4ab4115e2. **Verifiziert (kontrollierter cli-Spawn, kein anderer Spawn dazwischen):**
+  Claude-Produktion telegram_main spawnte auf `:latest` mit Image-ID 609248a30a2b,
+  provider=claude, Turn komplett durch → Reply „pong" zugestellt. Service NRestarts=0,
+  active/running durchgehend. Oliver-Freigabe „go" 2026-07-13.
+- rollback: `docker tag nanoclaw-agent-v2-67315674:pre-codex-6547acea nanoclaw-agent-v2-67315674:latest`
+  → nächster Spawn wieder altes Image (71d4ab). Kein DB-Change, kein Service-Neustart nötig.
+- executor: claude-code
+- reviewers: [codex]
+- updated_at: 2026-07-13
+
+### T4 (Original — ersetzt durch T4a + T4b): Promote `:latest` and stand up the permanent Codex group
+- status: Completed (via T4a permanente Gruppe auf Kandidaten-Image + T4b :latest-Promotion;
+  bewusst entkoppelt statt Big-Bang — siehe T4a/T4b/F1 oben)
 - depends_on: [T3]
 - location: /home/opj1claw/nanoclaw
 - description: Atomically retag the candidate image to `:latest`, verify
