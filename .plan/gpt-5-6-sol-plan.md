@@ -2,7 +2,7 @@
 
 - goal: Configure the production agent group `OPJ1 Codex` to use `gpt-5.6-sol` with medium reasoning, and prove the effective model with a real run.
 - decisions: Use the official Codex model slug `gpt-5.6-sol` without the provider prefix because NanoClaw passes this value directly to Codex. Roll back immediately to the prior unset/default model if the ChatGPT subscription or installed Codex CLI rejects it.
-- open_questions: The current Codex 0.138.0 model cache does not yet advertise GPT-5.6 Sol, so subscription-side availability must be established by a smoke test.
+- open_questions: GPT-5.6 Sol requires a newer Codex CLI than the installed 0.138.0; upgrading the pinned CLI and rebuilding the production image requires a separately approved plan extension.
 - constraints: Production change; preserve ChatGPT authentication and all other group settings; no credential output; no push; restart only the `OPJ1 Codex` group; update infrastructure status after success.
 
 ### T1: Record and validate current state
@@ -37,10 +37,11 @@
 - location: /home/opj1claw/nanoclaw/data/v2-sessions
 - description: Trigger one real turn, verify successful completion and confirm the effective model in Codex turn context; roll back if rejected.
 - validation: Inspect the new Codex session `turn_context` and NanoClaw service logs.
-- status: In Progress
-- next_action: Wake the existing stopped session with a minimal smoke-test message and inspect its new turn context and service logs.
-- evidence: Pending.
-- rollback: Restore the prior default model, restart the group, and verify GPT-5.5 resumes successfully.
+- status: Blocked
+- next_action: Obtain approval for a Codex CLI upgrade and production image rebuild, then repeat the GPT-5.6 Sol smoke test.
+- evidence: Real turn context selected model=`gpt-5.6-sol`, effort=`medium`, but Codex returned HTTP 400: `The 'gpt-5.6-sol' model requires a newer version of Codex.` Rollback applied as explicit model=`gpt-5.5`, effort=`medium`; target container stopped and config readback verified.
+- blocker: Installed Codex CLI 0.138.0 is too old for GPT-5.6 Sol. The confirmed scope did not authorize changing the pinned CLI version or rebuilding the production image.
+- rollback: Completed: restored GPT-5.5/medium and restarted the target group (`restarted: 1`).
 - files: data/v2-sessions, logs
 - executor: codex
 - updated_at: 2026-07-14
