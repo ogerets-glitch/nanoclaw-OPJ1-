@@ -3,7 +3,7 @@
 - goal: Configure the production agent group `OPJ1 Codex` to use `gpt-5.6-sol` with medium reasoning, and prove the effective model with a real run.
 - decisions: Use the official Codex model slug `gpt-5.6-sol` without the provider prefix because NanoClaw passes this value directly to Codex. Upgrade Codex from 0.138.0 to the actual latest stable 0.144.1 in a separately tagged candidate image so other NanoClaw groups and the global `latest` tag remain untouched. The initially documented 0.139.0 was superseded after the live package registry reported 0.144.1 during the candidate build; Oliver approved continuing with 0.144.1. Roll back immediately to GPT-5.5 and the prior image if validation fails.
 - open_questions: None; Oliver approved the CLI-upgrade and candidate-image extension on 2026-07-14.
-- constraints: Production change; preserve ChatGPT authentication and all other group settings; no credential output; no push; restart only the `OPJ1 Codex` group; update infrastructure status after success.
+- constraints: Production change; preserve ChatGPT authentication and all other group settings; no credential output; restart only the `OPJ1 Codex` group; update infrastructure status after success; push authorized by Oliver on 2026-07-14.
 
 ### T1: Record and validate current state
 - depends_on: []
@@ -40,7 +40,7 @@
 - status: Completed
 - next_action: Start T4.
 - evidence: Real inbound message at 10:28:27 spawned the candidate container; reply delivered at 10:28:37. New turn context at 08:28:30Z records model=`gpt-5.6-sol`, effort=`medium`; session readback is `container_status=running`; no 400/error occurred.
-- rollback: Completed: restored GPT-5.5/medium and restarted the target group (`restarted: 1`).
+- rollback: Restore GPT-5.5/medium and the prior image tag, then restart only the target group. This rollback was proven after the first rejected turn and the successful candidate was subsequently reactivated.
 - files: data/v2-sessions, logs
 - executor: codex
 - updated_at: 2026-07-14
@@ -64,10 +64,10 @@
 - location: /opt/shared/PROJECT_STATUS.md
 - description: Record the successful production model change, complete verification, and archive this plan.
 - validation: Review Git diff, ownership, permissions, service status, and log output.
-- status: In Progress
-- next_action: Update PROJECT_STATUS.md, run final tests/diff/permissions/service checks, mark the plan complete, and archive it.
-- evidence: Pending.
-- rollback: Revert documentation commit and retain the active plan if production validation is incomplete.
+- status: Completed
+- next_action: None; archive this plan and push the approved branch.
+- evidence: `/opt/shared/PROJECT_STATUS.md` updated; `sudo -u opj1claw pnpm test` passed 84 files/798 tests; CLI manifest test passed 6/6; `pnpm run build` completed with `tsc`; `git diff --check` passed; the live turn delivered a reply with model=`gpt-5.6-sol` and effort=`medium`. The optional agent-runner Bun suite was not run because `bun` was absent from the service user's sudo PATH and Oliver explicitly chose to stop further investigation.
+- rollback: Restore GPT-5.5/medium and `nanoclaw-agent-v2-67315674:codex-6547acea`, restart only the target group, and revert the CLI pin/documentation commits.
 - files: /opt/shared/PROJECT_STATUS.md, .plan/archive/gpt-5-6-sol-plan.md
 - executor: codex
 - updated_at: 2026-07-14
