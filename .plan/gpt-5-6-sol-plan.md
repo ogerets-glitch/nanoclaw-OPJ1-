@@ -10,9 +10,9 @@
 - location: /home/opj1claw/nanoclaw
 - description: Capture the current group configuration, installed Codex version, supported-model cache, Git state, and rollback value.
 - validation: `bin/ncl groups config get --id a9e70f1c-4c4d-4fc6-be2f-db7e28007e58`
-- status: In Progress
-- next_action: Commit this plan file, then back up the central DB before changing the group configuration.
-- evidence: Current config reports provider=codex, model=null, effort=null; Codex cache reports client_version=0.138.0 and no GPT-5.6 entry.
+- status: Completed
+- next_action: Start T2.
+- evidence: Plan-only commit `9756afa8`; current config reports provider=codex, model=null, effort=null; Codex cache reports client_version=0.138.0 and no GPT-5.6 entry; backup `data/v2.db.bak-20260714-gpt56sol` created.
 - rollback: No runtime change in this task.
 - files: .plan/gpt-5-6-sol-plan.md
 - executor: codex
@@ -24,8 +24,8 @@
 - location: /home/opj1claw/nanoclaw/data/v2.db
 - description: Set model to `gpt-5.6-sol` and reasoning effort to `medium`, then restart only the target agent group.
 - validation: `bin/ncl groups config get --id a9e70f1c-4c4d-4fc6-be2f-db7e28007e58`
-- status: Not Completed
-- next_action: Wait for T1 completion.
+- status: In Progress
+- next_action: Update the target group configuration, restart only that group, then read back the saved configuration.
 - evidence: Pending.
 - rollback: Restore model and effort to their prior unset/default values and restart the target group.
 - files: data/v2.db, groups/opj1-codex/container.json
