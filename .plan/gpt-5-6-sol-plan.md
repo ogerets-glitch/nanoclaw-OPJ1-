@@ -37,10 +37,9 @@
 - location: /home/opj1claw/nanoclaw/data/v2-sessions
 - description: Trigger one real turn, verify successful completion and confirm the effective model in Codex turn context; roll back if rejected.
 - validation: Inspect the new Codex session `turn_context` and NanoClaw service logs.
-- status: In Progress
-- next_action: Oliver sends one new message to the stopped `OPJ1 Codex` chat; then inspect the spawned container, response, turn context, and service logs.
-- evidence: Initial 0.138.0 attempt failed with the expected newer-CLI HTTP 400 and was rolled back. After the approved upgrade, config readback now reports model=`gpt-5.6-sol`, effort=`medium`, image=`nanoclaw-agent-v2-67315674:gpt56sol-codex01441`; session is cleanly stopped and will spawn from that candidate on the next chat message.
-- blocker: A real inbound chat message is required to wake the stopped session; `ncl groups restart` correctly reports `restarted: 0` when no container is active.
+- status: Completed
+- next_action: Start T4.
+- evidence: Real inbound message at 10:28:27 spawned the candidate container; reply delivered at 10:28:37. New turn context at 08:28:30Z records model=`gpt-5.6-sol`, effort=`medium`; session readback is `container_status=running`; no 400/error occurred.
 - rollback: Completed: restored GPT-5.5/medium and restarted the target group (`restarted: 1`).
 - files: data/v2-sessions, logs
 - executor: codex
@@ -65,8 +64,8 @@
 - location: /opt/shared/PROJECT_STATUS.md
 - description: Record the successful production model change, complete verification, and archive this plan.
 - validation: Review Git diff, ownership, permissions, service status, and log output.
-- status: Not Completed
-- next_action: Wait for T3 completion.
+- status: In Progress
+- next_action: Update PROJECT_STATUS.md, run final tests/diff/permissions/service checks, mark the plan complete, and archive it.
 - evidence: Pending.
 - rollback: Revert documentation commit and retain the active plan if production validation is incomplete.
 - files: /opt/shared/PROJECT_STATUS.md, .plan/archive/gpt-5-6-sol-plan.md
