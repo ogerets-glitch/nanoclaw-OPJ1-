@@ -24,9 +24,9 @@
 - location: /home/opj1claw/nanoclaw/data/v2.db
 - description: Set model to `gpt-5.6-sol` and reasoning effort to `medium`, then restart only the target agent group.
 - validation: `bin/ncl groups config get --id a9e70f1c-4c4d-4fc6-be2f-db7e28007e58`
-- status: In Progress
-- next_action: Update the target group configuration, restart only that group, then read back the saved configuration.
-- evidence: Pending.
+- status: Completed
+- next_action: Start T3.
+- evidence: `ncl groups config update` and readback both report model=`gpt-5.6-sol`, effort=`medium`; target container was already stopped (`restarted: 0`), so no active workload was interrupted.
 - rollback: Restore model and effort to their prior unset/default values and restart the target group.
 - files: data/v2.db, groups/opj1-codex/container.json
 - executor: codex
@@ -37,8 +37,8 @@
 - location: /home/opj1claw/nanoclaw/data/v2-sessions
 - description: Trigger one real turn, verify successful completion and confirm the effective model in Codex turn context; roll back if rejected.
 - validation: Inspect the new Codex session `turn_context` and NanoClaw service logs.
-- status: Not Completed
-- next_action: Wait for T2 completion.
+- status: In Progress
+- next_action: Wake the existing stopped session with a minimal smoke-test message and inspect its new turn context and service logs.
 - evidence: Pending.
 - rollback: Restore the prior default model, restart the group, and verify GPT-5.5 resumes successfully.
 - files: data/v2-sessions, logs
