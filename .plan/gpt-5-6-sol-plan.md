@@ -38,9 +38,9 @@
 - description: Trigger one real turn, verify successful completion and confirm the effective model in Codex turn context; roll back if rejected.
 - validation: Inspect the new Codex session `turn_context` and NanoClaw service logs.
 - status: In Progress
-- next_action: Switch only the target group to the 0.144.1 candidate image and GPT-5.6 Sol/medium, then run a real turn and inspect its turn context and logs.
-- evidence: Real turn context selected model=`gpt-5.6-sol`, effort=`medium`, but Codex returned HTTP 400: `The 'gpt-5.6-sol' model requires a newer version of Codex.` Rollback applied as explicit model=`gpt-5.5`, effort=`medium`; target container stopped and config readback verified.
-- blocker: Installed Codex CLI 0.138.0 is too old for GPT-5.6 Sol. The confirmed scope did not authorize changing the pinned CLI version or rebuilding the production image.
+- next_action: Oliver sends one new message to the stopped `OPJ1 Codex` chat; then inspect the spawned container, response, turn context, and service logs.
+- evidence: Initial 0.138.0 attempt failed with the expected newer-CLI HTTP 400 and was rolled back. After the approved upgrade, config readback now reports model=`gpt-5.6-sol`, effort=`medium`, image=`nanoclaw-agent-v2-67315674:gpt56sol-codex01441`; session is cleanly stopped and will spawn from that candidate on the next chat message.
+- blocker: A real inbound chat message is required to wake the stopped session; `ncl groups restart` correctly reports `restarted: 0` when no container is active.
 - rollback: Completed: restored GPT-5.5/medium and restarted the target group (`restarted: 1`).
 - files: data/v2-sessions, logs
 - executor: codex
