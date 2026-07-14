@@ -1,0 +1,59 @@
+# NanoClaw Codex group: GPT-5.6 Sol
+
+- goal: Configure the production agent group `OPJ1 Codex` to use `gpt-5.6-sol` with medium reasoning, and prove the effective model with a real run.
+- decisions: Use the official Codex model slug `gpt-5.6-sol` without the provider prefix because NanoClaw passes this value directly to Codex. Roll back immediately to the prior unset/default model if the ChatGPT subscription or installed Codex CLI rejects it.
+- open_questions: The current Codex 0.138.0 model cache does not yet advertise GPT-5.6 Sol, so subscription-side availability must be established by a smoke test.
+- constraints: Production change; preserve ChatGPT authentication and all other group settings; no credential output; no push; restart only the `OPJ1 Codex` group; update infrastructure status after success.
+
+### T1: Record and validate current state
+- depends_on: []
+- location: /home/opj1claw/nanoclaw
+- description: Capture the current group configuration, installed Codex version, supported-model cache, Git state, and rollback value.
+- validation: `bin/ncl groups config get --id a9e70f1c-4c4d-4fc6-be2f-db7e28007e58`
+- status: In Progress
+- next_action: Commit this plan file, then back up the central DB before changing the group configuration.
+- evidence: Current config reports provider=codex, model=null, effort=null; Codex cache reports client_version=0.138.0 and no GPT-5.6 entry.
+- rollback: No runtime change in this task.
+- files: .plan/gpt-5-6-sol-plan.md
+- executor: codex
+- reviewers: [codex-self-review]
+- updated_at: 2026-07-14
+
+### T2: Apply model configuration and restart group
+- depends_on: [T1]
+- location: /home/opj1claw/nanoclaw/data/v2.db
+- description: Set model to `gpt-5.6-sol` and reasoning effort to `medium`, then restart only the target agent group.
+- validation: `bin/ncl groups config get --id a9e70f1c-4c4d-4fc6-be2f-db7e28007e58`
+- status: Not Completed
+- next_action: Wait for T1 completion.
+- evidence: Pending.
+- rollback: Restore model and effort to their prior unset/default values and restart the target group.
+- files: data/v2.db, groups/opj1-codex/container.json
+- executor: codex
+- updated_at: 2026-07-14
+
+### T3: Smoke-test effective model
+- depends_on: [T2]
+- location: /home/opj1claw/nanoclaw/data/v2-sessions
+- description: Trigger one real turn, verify successful completion and confirm the effective model in Codex turn context; roll back if rejected.
+- validation: Inspect the new Codex session `turn_context` and NanoClaw service logs.
+- status: Not Completed
+- next_action: Wait for T2 completion.
+- evidence: Pending.
+- rollback: Restore the prior default model, restart the group, and verify GPT-5.5 resumes successfully.
+- files: data/v2-sessions, logs
+- executor: codex
+- updated_at: 2026-07-14
+
+### T4: Document and close
+- depends_on: [T3]
+- location: /opt/shared/PROJECT_STATUS.md
+- description: Record the successful production model change, complete verification, and archive this plan.
+- validation: Review Git diff, ownership, permissions, service status, and log output.
+- status: Not Completed
+- next_action: Wait for T3 completion.
+- evidence: Pending.
+- rollback: Revert documentation commit and retain the active plan if production validation is incomplete.
+- files: /opt/shared/PROJECT_STATUS.md, .plan/archive/gpt-5-6-sol-plan.md
+- executor: codex
+- updated_at: 2026-07-14
