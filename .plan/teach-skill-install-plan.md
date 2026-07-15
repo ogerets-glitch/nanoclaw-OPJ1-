@@ -10,8 +10,8 @@
 - location: /home/hermesagent/.hermes/skills/productivity/teach
 - description: Vollstaendigen Upstream-Skill installieren und Eigentum sowie Berechtigungen korrigieren.
 - validation: `hermes skills list` und Dateivergleich gegen Upstream
-- status: Not Completed
-- next_action: Task auf In Progress setzen und committen.
+- status: In Progress
+- next_action: Upstream-Skill in Hermes' Produktivitaets-Kategorie installieren.
 - evidence:
 - blocker:
 - rollback: Verzeichnis `/home/hermesagent/.hermes/skills/productivity/teach` entfernen.
