@@ -25,9 +25,9 @@
 - location: /home/opj1claw/nanoclaw/container/skills/teach
 - description: Vollstaendigen Upstream-Skill als getrackte NanoClaw-Dateien installieren.
 - validation: `git diff --check`, Upstream-Dateivergleich und NanoClaw-Tests
-- status: In Progress
-- next_action: Upstream-Skill nach `container/skills/teach` installieren und committen.
-- evidence:
+- status: Completed
+- next_action: Keine.
+- evidence: Vollstaendiger Sechs-Dateien-Ordner installiert; `diff -qr` gegen Hermes-Install ohne Abweichung; Eigentum `opj1claw:opj1claw`.
 - blocker:
 - rollback: Installations-Commit revertieren.
 - files: container/skills/teach/**
@@ -40,8 +40,8 @@
 - location: /home/opj1claw/nanoclaw/data/v2.db
 - description: Konsistentes DB-Backup erzeugen, `teach` atomar zur bestehenden festen Skill-Liste hinzufuegen und die OPJ1-Gruppe neu laden.
 - validation: `ncl groups config get --id ag-1777053973937-w5v230 --json` und Symlink-Pruefung
-- status: Not Completed
-- next_action: Nach T2 auf In Progress setzen und committen.
+- status: In Progress
+- next_action: SQLite-Backup erstellen und `teach` atomar zur OPJ1-Skill-Liste hinzufuegen.
 - evidence:
 - blocker:
 - rollback: DB-Backup zurueckspielen und OPJ1-Gruppe erneut starten.
