@@ -10,9 +10,9 @@
 - location: /home/hermesagent/.hermes/skills/productivity/teach
 - description: Vollstaendigen Upstream-Skill installieren und Eigentum sowie Berechtigungen korrigieren.
 - validation: `hermes skills list` und Dateivergleich gegen Upstream
-- status: In Progress
-- next_action: Upstream-Skill in Hermes' Produktivitaets-Kategorie installieren.
-- evidence:
+- status: Completed
+- next_action: Keine.
+- evidence: `hermes skills list` meldet `teach | productivity | local | enabled`; sechs Dateien und zwei Verzeichnisse gehoeren `hermesagent:hermesagent`.
 - blocker:
 - rollback: Verzeichnis `/home/hermesagent/.hermes/skills/productivity/teach` entfernen.
 - files: /home/hermesagent/.hermes/skills/productivity/teach/**
@@ -25,8 +25,8 @@
 - location: /home/opj1claw/nanoclaw/container/skills/teach
 - description: Vollstaendigen Upstream-Skill als getrackte NanoClaw-Dateien installieren.
 - validation: `git diff --check`, Upstream-Dateivergleich und NanoClaw-Tests
-- status: Not Completed
-- next_action: Nach T1 auf In Progress setzen und committen.
+- status: In Progress
+- next_action: Upstream-Skill nach `container/skills/teach` installieren und committen.
 - evidence:
 - blocker:
 - rollback: Installations-Commit revertieren.
