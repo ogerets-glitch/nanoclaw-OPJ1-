@@ -40,9 +40,9 @@
 - location: /home/opj1claw/nanoclaw/data/v2.db
 - description: Konsistentes DB-Backup erzeugen, `teach` atomar zur bestehenden festen Skill-Liste hinzufuegen und die OPJ1-Gruppe neu laden.
 - validation: `ncl groups config get --id ag-1777053973937-w5v230 --json` und Symlink-Pruefung
-- status: In Progress
-- next_action: SQLite-Backup erstellen und `teach` atomar zur OPJ1-Skill-Liste hinzufuegen.
-- evidence:
+- status: Completed
+- next_action: Keine.
+- evidence: Backup `data/v2.db.bak-20260716-003036` mit `integrity_check=ok` und Modus 600; atomare Aenderung `changes()=1`; `ncl groups config get` zeigt `teach`; Gruppen-Restart meldet `ok=true, restarted=0, rebuilt=false`.
 - blocker:
 - rollback: DB-Backup zurueckspielen und OPJ1-Gruppe erneut starten.
 - files: data/v2.db (runtime, gitignored), groups/telegram_main/container.json (materialisiert, gitignored)
@@ -55,8 +55,8 @@
 - location: Hermes- und NanoClaw-Laufzeit
 - description: Hermes-Gateway neu starten, Logs und Skill-Erkennung pruefen sowie NanoClaw-Diff, Tests, Ownership und Laufzeitstatus kontrollieren.
 - validation: Service-Status, Journal-Auszug, Skill-Listen, Checksummen, `pnpm test`, `pnpm lint`, `pnpm typecheck`
-- status: Not Completed
-- next_action: Nach T3 auf In Progress setzen und committen.
+- status: In Progress
+- next_action: Hermes neu starten und beide Installationen, Tests, Logs, Diff und Rechte abschliessend pruefen.
 - evidence:
 - blocker:
 - rollback: T1 bis T3 gemaess jeweiligem Rollback zuruecknehmen.
