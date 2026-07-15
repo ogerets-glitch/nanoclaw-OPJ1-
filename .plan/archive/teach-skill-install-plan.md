@@ -55,9 +55,9 @@
 - location: Hermes- und NanoClaw-Laufzeit
 - description: Hermes-Gateway neu starten, Logs und Skill-Erkennung pruefen sowie NanoClaw-Diff, Tests, Ownership und Laufzeitstatus kontrollieren.
 - validation: Service-Status, Journal-Auszug, Skill-Listen, Checksummen, `pnpm test`, `pnpm lint`, `pnpm typecheck`
-- status: In Progress
-- next_action: Hermes neu starten und beide Installationen, Tests, Logs, Diff und Rechte abschliessend pruefen.
-- evidence:
+- status: Completed
+- next_action: Keine.
+- evidence: Hermes und NanoClaw `active`; Hermes meldet `teach | productivity | local | enabled`; beide Installationen sind ohne Diff und haben korrekte Eigentumer/Rechte; NanoClaw 84/84 Testdateien und 798/798 Tests bestanden; Typecheck bestanden; `src` seit Vorher-Commit unveraendert. Lint zeigt 12 bestehende Fehler im unveraenderten `src`-Bestand.
 - blocker:
 - rollback: T1 bis T3 gemaess jeweiligem Rollback zuruecknehmen.
 - files: .plan/teach-skill-install-plan.md
