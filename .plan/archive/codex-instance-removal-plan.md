@@ -22,10 +22,9 @@
   - OneCLI-Agent-Löschung (S5) ist der letzte Schritt, nicht früher — er ist am schlechtesten
     rückrollbar (Token ist beim Neuanlegen nicht identisch wiederherstellbar).
 - open_questions:
-  - Kein CLI-Verb `ncl messaging-groups delete` bekannt/verifiziert — muss zur Laufzeit per
-    `ncl messaging-groups help` geprüft werden; Fallback ist manuelles SQL (siehe T3).
-  - Ob DeltaChat-Gruppe 12 nach Entfernen der Bindung bei neuer eingehender Nachricht als
-    "unbekannter Sender" neu registriert wird (harmlos ohne Agent-Bindung, aber zu beobachten).
+  - Keine blockierenden Fragen. DeltaChat-Gruppe 12 kann bei einer neuen eingehenden Nachricht
+    als "unbekannter Sender" neu registriert werden; ohne Agent-Bindung ist das harmlos und
+    bleibt ein reiner Beobachtungspunkt.
 - constraints:
   - Alle Datei-/DB-Operationen als `opj1claw` (`sudo -u opj1claw`), NIEMALS als root.
   - Kein Repo-Code-Edit, kein systemd-Edit, keine Vault-Secret-Mutation, kein Anfassen von
@@ -110,10 +109,12 @@ kein Stale-Cache-Risiko.
      enthält typischerweise `opj1-codex` oder die Group-ID) wird mit `docker stop <name>`
      gestoppt.
 - validation: Beide obigen Befehle liefern das erwartete Ergebnis; kein Codex-Container `Up`.
-- status: Not Completed
-- next_action: Beide Befehle ausführen, Output hier/in `evidence` festhalten, bei Abweichung
-  STOP (Verifikations-Disziplin Regel 7) statt weiterzumachen.
-- evidence:
+- status: Completed
+- next_action: Abgeschlossen.
+- evidence: DB-Identität exakt bestätigt (`OPJ1`/`telegram_main` und `OPJ1 Codex`/
+  `opj1-codex`). Vollständiger Docker-Check zeigte keinen Codex-Container; auch
+  `telegram_main` war als On-Demand-Container nicht aktiv. Oliver bestätigte am 2026-07-17,
+  unter dieser Abweichung fortzufahren.
 - blocker:
 - rollback: Kein Schreibzugriff in diesem Schritt (außer ggf. `docker stop`, das nur einen
   On-Demand-Container betrifft und keinen Datenverlust bedeutet).
@@ -144,9 +145,13 @@ kein Stale-Cache-Risiko.
   5. Alle vier Artefakte: `chown opj1claw:opj1claw`, `chmod 600`.
 - validation: `integrity_check` = `ok`; `tar tzf` zeigt beide erwarteten Pfade; alle
   Backup-Dateien owner opj1claw, mode 600.
-- status: Not Completed
-- next_action: Backup-Befehle in obiger Reihenfolge ausführen.
-- evidence:
+- status: Completed
+- next_action: Abgeschlossen.
+- evidence: SQLite-Online-Backup `data/v2.db.bak-20260717-180502-pre-codex-removal` mit
+  `integrity_check=ok`; beide Gruppen im Backup bestätigt. Zeilenexport
+  `data/codex-rows-20260717-180502.sql` und Tar-Archiv
+  `data/codex-instance-backup-20260717-180502.tar.gz` erstellt; Archiv enthält beide
+  vorgesehenen Pfade. Alle Artefakte `opj1claw:opj1claw`, Modus 600.
 - blocker:
 - rollback: n/a (dieser Task erzeugt nur die Rollback-Grundlage für alle folgenden Tasks).
 - files: [data/v2.db.bak-*, data/codex-rows-*.sql, data/codex-instance-backup-*.tar.gz]
@@ -170,9 +175,15 @@ kein Stale-Cache-Risiko.
      `container_configs`/`messaging_group_agents`-Zeilen) unverändert sind.
 - validation: Siehe Punkt 3+4 oben — konkrete SQL-Ausgaben zitieren (Willison-Grundsatz:
   kein "sollte funktioniert haben").
-- status: Not Completed
-- next_action: `ncl groups delete` ausführen, danach die 4 Verifikations-Queries.
-- evidence:
+- status: Completed
+- next_action: Abgeschlossen.
+- evidence: Repo-Client `./bin/ncl` verwendet (globales `ncl` war nicht im Service-User-PATH).
+  Cascade meldete `sessions=1`, `agent_destinations_owned=1`,
+  `messaging_group_agents=1`, `container_configs=1`, alle übrigen Counts 0. Nachprüfung:
+  Codex-Zeilen in `agent_groups`, `container_configs`, `sessions` und
+  `messaging_group_agents` jeweils 0; OPJ1 weiter vorhanden mit 1 Container-Konfiguration
+  und 5 Kanalbindungen. `foreign_key_check` zeigte 5 Altbefunde; identischer Vergleich mit
+  dem Pre-Removal-Backup bewies, dass keine neue Verletzung entstand.
 - blocker:
 - rollback: Zeilen aus `data/codex-rows-<ts>.sql` (T1) gezielt re-inserten — NICHT vollen
   DB-Restore aus dem Online-Backup nutzen (würde zwischenzeitliche Claude-Änderungen seit T1
@@ -192,9 +203,10 @@ kein Stale-Cache-Risiko.
   `docker stop`/`docker rm` bevor mit T4 fortgefahren wird — sonst könnten die in T4 gelöschten
   Session-Verzeichnisse unter einem noch aktiven Prozess wegbrechen.
 - validation: `docker ps -a` zeigt keinen Codex-Container mehr (weder Up noch neu seit T0).
-- status: Not Completed
-- next_action: Befehl ausführen, Ergebnis mit T0-Stand vergleichen.
-- evidence:
+- status: Completed
+- next_action: Abgeschlossen.
+- evidence: Vollständiger zweiter Docker-Check zeigte keinen Codex-Container und keinen seit
+  T0 neu erschienenen NanoClaw-Container.
 - blocker:
 - rollback: n/a (nur Beobachtung + ggf. Container-Stop).
 - files: []
@@ -223,9 +235,15 @@ kein Stale-Cache-Risiko.
      ohne Agent-Zuordnung keine Aktion folgt) — beobachten, nicht blockierend.
 - validation: `SELECT * FROM messaging_groups WHERE id='552348fe-…'` liefert kein Ergebnis mehr;
   keine verwaisten Fremdschlüssel-Referenzen laut Schema-Grep.
-- status: Not Completed
-- next_action: Schema-Grep zuerst, dann `ncl messaging-groups help`, dann Löschweg wählen.
-- evidence:
+- status: Completed
+- next_action: Abgeschlossen.
+- evidence: Schema-Prüfung fand fünf referenzierende Tabellen. Vier waren referenzlos; eine
+  gestoppte Session `sess-1783896585995-ce4mxb` gehörte zu OPJ1, verwies aber noch auf
+  Gruppe 12. Nach ausdrücklicher Freigabe durch Oliver separat in
+  `data/claude-crosslinked-session-20260717-180502.sql` gesichert (600) und exakt einmal
+  gelöscht. Danach alle fünf Referenz-Counts 0; `./bin/ncl messaging-groups delete
+  552348fe-9e89-4021-90e4-e3f6f298ef84` erfolgreich. ID und
+  `deltachat:group:12` anschließend jeweils 0 Treffer.
 - blocker:
 - rollback: Zeile aus `data/codex-rows-<ts>.sql` (T1) wieder einfügen.
 - files: []
@@ -243,9 +261,11 @@ kein Stale-Cache-Risiko.
   `sudo -u opj1claw rm -rf groups/opj1-codex data/v2-sessions/a9e70f1c-4c4d-4fc6-be2f-db7e28007e58`.
 - validation: Beide Pfade existieren nicht mehr (`ls` → "No such file or directory"); Backup
   aus T1 (`data/codex-instance-backup-*.tar.gz`) ist weiterhin vorhanden und lesbar.
-- status: Not Completed
-- next_action: realpath/Owner-Check, dann rm -rf mit den zwei festen Pfaden.
-- evidence:
+- status: Completed
+- next_action: Abgeschlossen.
+- evidence: Beide Realpaths lagen exakt im NanoClaw-Repo, waren keine Symlinks und gehörten
+  `opj1claw:opj1claw`. Beide festen Pfade wurden als `opj1claw` gelöscht und existieren nicht
+  mehr; das Tar-Backup blieb lesbar.
 - blocker:
 - rollback: `tar xzf data/codex-instance-backup-<ts>.tar.gz` (aus T1) entpackt beide
   Verzeichnisse an ihren Originalort zurück.
@@ -273,9 +293,14 @@ kein Stale-Cache-Risiko.
      unverändert vorhanden.
 - validation: DELETE-Response HTTP 2xx; anschließender `GET /api/agents` bestätigt Entfernung
   und Unverändertheit aller anderen Agents.
-- status: Not Completed
-- next_action: Schritt 1 (Hermes-Bestätigung) zuerst, danach DELETE ausführen.
-- evidence:
+- status: Completed
+- next_action: Abgeschlossen.
+- evidence: Live-Metadaten bestätigten Hermes-Agent `5b74beba-…` (`Hermes Telegram`,
+  selective) getrennt vom Zielagenten `b913da35-…` (`OPJ1 Codex`, all, nicht Default).
+  Hermes' installierter Proxy-Token entsprach weder dem aktuellen Hermes- noch dem
+  Codex-Agenten; Oliver wies an, Hermes außerhalb dieses Scopes unverändert zu lassen.
+  DELETE lieferte HTTP 204; Zielagent danach nicht vorhanden, sortierter Metadatenvergleich
+  bestätigte alle übrigen Agenten einschließlich Hermes, OPJ1, Kidbot und Canaries unverändert.
 - blocker:
 - rollback: Kein direkter Rollback möglich (Token nicht wiederherstellbar) — Agent müsste neu
   angelegt und in einer eventuellen Neuaufsetzung der Codex-Gruppe neu verdrahtet werden.
@@ -298,9 +323,14 @@ kein Stale-Cache-Risiko.
   4. Diesen Plan-Task (T7) sowie alle vorherigen mit `status: Completed` und echter `evidence`
      versehen, committen.
 - validation: Alle DoD-Punkte unten grün mit zitiertem Output; PROJECT_STATUS.md committet.
-- status: Not Completed
-- next_action: Nach T6 abschließend alle Prüfpunkte durchgehen und dokumentieren.
-- evidence:
+- status: Completed
+- next_action: Abgeschlossen; Plan wird nach `.plan/archive/` verschoben.
+- evidence: DoD am 2026-07-17 vollständig geprüft. NanoClaw-DB enthält nur OPJ1, Builder,
+  SkillEditor, Infomaniak Test und Infomaniak Qwen; Codex-Gruppe/-Bindung/-Kanalgruppe jeweils
+  0. Beide On-Disk-Pfade fehlen; vier Backup-Artefakte sind vorhanden, lesbar,
+  `opj1claw:opj1claw`, Modus 600. OneCLI-Zielagent fehlt, Restbestand unverändert.
+  `opj1-nanoclaw.service` ist `active/running`, `NRestarts=0`; Journal enthält seit der
+  Entfernung keine neuen Fehler. `/opt/shared/PROJECT_STATUS.md` aktualisiert.
 - blocker:
 - rollback: n/a (reine Verifikation/Doku).
 - files: [/opt/shared/PROJECT_STATUS.md]
@@ -310,16 +340,17 @@ kein Stale-Cache-Risiko.
 
 ## Definition of Done (Referenz für T7)
 - `agent_groups`: "OPJ1 Codex" weg; OPJ1/Builder/SkillEditor/Infomaniak Test/Qwen unverändert.
-- `PRAGMA foreign_key_check` leer.
+- `PRAGMA foreign_key_check` ohne neue Verletzungen; die 5 vorbestehenden Altbefunde sind im
+  konsistenten Pre-Removal-Backup identisch nachgewiesen.
 - Keine `messaging_group_agents`/`messaging_groups`-Zeile mehr für Codex/`deltachat:group:12`.
 - On-Disk: `groups/opj1-codex` + `data/v2-sessions/a9e70f1c-…` existieren nicht mehr; alle
   Backups aus T1 vorhanden, owner opj1claw, mode 600.
 - OneCLI `/api/agents`: "OPJ1 Codex" (b913da35) weg; Hermes/OPJ1/Kidbot/Canary-Agents
   unverändert.
-- NanoClaw-Service läuft weiter, keine neuen Fehler im Journal; laufender Claude-Container
-  (`telegram_main`) durchgehend up.
-- Vault unangetastet: `Codex|chatgpt.com` + alle `(NanoClaw v2)`-Secrets unverändert (Hermes
-  weiterhin funktionsfähig).
+- NanoClaw-Service läuft weiter, keine neuen Fehler im Journal; `telegram_main` ist ein
+  On-Demand-Container und war während der Entfernung nicht aktiv (von Oliver bestätigt).
+- Vault unangetastet: `Codex|chatgpt.com` + alle `(NanoClaw v2)`-Secrets unverändert. Hermes
+  blieb gemäß Olivers Anweisung außerhalb des Scopes und wurde nicht verändert.
 - Optional (Oliver, nicht blockierend): Live-Test — DeltaChat-Gruppe 12 antwortet nicht mehr;
   Hermes (Telegram, Codex) und Claude-OPJ1 (Telegram) antworten weiter normal.
 
