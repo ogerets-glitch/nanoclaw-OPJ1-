@@ -1,44 +1,51 @@
 ---
 name: local-services
-description: "Inventar der lokalen Voice- und Audio-Dienste auf dem VPS-Host (TTS, STT, Piper-Fallback). Nutze als Referenz, wenn andere Skills (z.B. tts) die Endpoints brauchen, oder wenn der User fragt 'welche lokalen Dienste laufen' oder 'was ist auf dem Host installiert'."
+description: "Inventar des zentralen Speech-to-Text-Dienstes auf dem VPS. Nutze diese Referenz für eingehende Sprachnachrichten, STT-Diagnose und Providerstatus. Sprachausgabe/TTS ist bewusst deaktiviert; Agentenantworten erfolgen ausschließlich als Text."
 allowed-tools: Bash(curl:*)
 ---
 
-# Lokale Services (Host-seitig)
+# Lokaler Speech-to-Text-Adapter
 
-Diese Dienste laufen direkt auf dem VPS-Host und sind aus dem NanoClaw-Container über `host.docker.internal` erreichbar (Container-Bridge → Host-Loopback).
-
-## TTS (Text-to-Speech)
-
-| Service | Endpoint | Stimme | Qualität | Healthcheck |
-|---|---|---|---|---|
-| **TTS-OpenAI** (primär) | `http://host.docker.internal:8385/synthesize` | onyx (default) | sehr hoch | `GET /health` |
-| **Piper** (Fallback) | `http://host.docker.internal:8386/synthesize` | de_DE-thorsten-high | mittel-hoch, lokal/kostenlos | `GET /health` |
-
-**Request-Schema (beide):** `POST {"text": "<deutsch>"}` → Response: `audio/ogg` (OPUS-codec, ca. 32 kbps).
-
-**Wann welcher Dienst?**
-- Default: **TTS-OpenAI** — bessere Stimme, bezahlt aus dem OpenAI-Kontingent.
-- Bei 5xx von TTS-OpenAI (Quota, Outage): automatischer Fallback auf Piper. Piper läuft lokal, immer verfügbar, keine externe API-Abhängigkeit.
+Der zentrale STT-Dienst läuft direkt auf dem VPS-Host und ist aus dem
+NanoClaw-Container über `host.docker.internal` erreichbar.
 
 ## STT (Speech-to-Text)
 
-| Service | Endpoint | Modell | Healthcheck |
+| Dienst | Endpoint | Routing | Healthcheck |
 |---|---|---|---|
-| **Whisper** | `http://host.docker.internal:8384/transcribe` | faster-whisper small int8, lokal | (kein eigener Endpoint) |
+| **Cloud STT Adapter** | `http://host.docker.internal:8384/transcribe` | Infomaniak primär, OpenAI-Fallback | `GET /health` |
 
-**Request-Schema:** `POST` als `multipart/form-data` mit Feld `file=@audio.ogg` und optional `language=de` → Response: `{"text": "<transkript>"}`.
+**Request:** `POST` als `multipart/form-data` mit `file=@audio.ogg` und optional
+`language=de`.
 
-## Sicherheits-Hinweis
+**Erfolgsantwort:**
 
-TTS-OpenAI (8385) und Piper (8386) binden auf `127.0.0.1`, Whisper (8384) bindet auf `0.0.0.0` und ist nur durch UFW-Regel auf den Docker-Bridge-Range `172.17.0.0/16` begrenzt. Alle drei Dienste sind ohne Auth und ohne TLS — kein externer Zugang. **Keine personenbezogenen Daten in Eingabe-Texten** (TTS) oder Audio-Dateien (STT) verarbeiten, die nicht ohnehin im Bot-Kontext stehen.
+```json
+{"text": "<transkript>", "language": "de", "duration": 1.234}
+```
+
+Der Response-Header `X-STT-Backend` nennt `infomaniak` oder `openai`.
+Es gibt kein lokales Whisper-Modell und keinen lokalen Transkriptions-Fallback.
+
+## TTS / Sprachausgabe
+
+TTS ist auf diesem System bewusst deaktiviert. Die früheren Endpoints auf den
+Ports 8385, 8386 und 8387 stehen nicht zur Verfügung. Agentenantworten immer als
+Text senden und keine Voice-Ausgabe, Audiodatei oder TTS-Fallback versuchen.
 
 ## Diagnose
 
 ```bash
-curl -s http://host.docker.internal:8385/health
-curl -s http://host.docker.internal:8386/health
-curl -s --max-time 3 http://host.docker.internal:8384/openapi.json | head -c 200
+curl -s --max-time 5 http://host.docker.internal:8384/health
 ```
 
-Wenn ein Endpoint timeoutet oder nicht antwortet, ist der zugehörige systemd-Service auf dem Host wahrscheinlich gestoppt — der User muss das auf dem Host-Shell prüfen (`systemctl status tts-openai piper-tts whisper-stt`).
+Ein gesunder Dienst meldet `ok: true` und die nichtgeheimen Readiness-Flags
+`infomaniak_ready` und `openai_ready`. Bei einem STT-Fehler höflich um eine
+Textnachricht bitten; niemals ein Transkript erfinden.
+
+## Sicherheit
+
+Der Dienst ist ohne eigene Client-Authentifizierung und nur für die vorgesehenen
+internen Netze freigegeben. Audio nur verarbeiten, wenn es im Bot-Kontext ohnehin
+vom Nutzer übermittelt wurde. Health- und Fehlerausgaben enthalten keine
+Provider-Schlüssel.
