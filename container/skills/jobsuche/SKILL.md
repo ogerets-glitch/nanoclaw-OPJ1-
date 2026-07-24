@@ -103,13 +103,15 @@ Wenn das Profil als Fließtext kommt, in folgende Felder auflösen — fehlende 
 1. **BA-Breitensuche** mit den harten Filtern (Berufsfeld, Ort, Umkreis, Arbeitszeit) — **nicht Sprachniveau, nicht Aufenthaltsstatus** (keine BA-API-Filter).
 2. **Arbeitgeber-Vorschläge** (nur wenn Einsatzregion Aachen / Umkreis) — wie in Workflow A Schritt 3: 3–5 kontextrelevante Arbeitgeber mit Begründung vorschlagen, bei Zustimmung Karriereseiten fetchen. Hier besonders wichtig, weil Matching typischerweise Klient:innen mit Einschränkungen betrifft und der öffentliche/kirchliche Sektor oft passendere Konditionen bietet (Sprachniveau-Toleranz, Teilzeit, Anerkennungsverfahren im Gange).
 3. **Dedupe** — siehe Abschnitt „Dedupe" unten.
-4. **Top 15–20 Treffer** holen und `jobsuche_details` bzw. Karriereseiten-Volltext für die Kandidaten aufrufen, die auf den harten Filtern passen.
+4. **15–20 Kandidaten breit im Volltext prüfen**, die die harten Filter erfüllen: für jeden Kandidaten `jobsuche_details` bzw. den Karriereseiten-Volltext aufrufen. Treffer nicht allein wegen Berufsbezeichnung, Träger oder Sammelkategorie aussortieren. Gerade bei großen Trägern können Sammelkategorien unterschiedliche Einsatzfelder enthalten; beispielsweise können sich hinter ihnen auch passende Kita-Stellen verbergen. Erfüllen weniger als 15 Kandidaten die harten Filter, alle verfügbaren prüfen.
 5. **Manuelle Nachfilterung** im Stellentext auf:
    - Sprachanforderung vs. tatsächliches Sprachniveau
    - Qualifikationsanforderung vs. formale Qualifikation
    - Versteckte Ausschlüsse (Führerschein, Schichtbereitschaft, körperliche Anforderungen)
-6. **Ausgabe: Top 3–5 Matches** mit kurzer Begründung pro Treffer — *warum passt diese Stelle, was ist noch zu prüfen?*
-7. **Ende des Jobsuche-Workflows.** Der Skill liefert die Top-Matches und hört hier auf. Wenn im Anschluss Anschreiben oder Lebenslauf erstellt werden sollen, muss der `bewerbungs-skill` **separat aufgerufen** werden — kein automatischer Übergang.
+   Innerhalb des festgelegten Suchradius zusätzlich ein qualitatives **Entfernungs-Passungs-Gefälle** anwenden: Je weiter eine Stelle entfernt ist, desto stärker muss ihre fachliche und praktische Passung sein. Treffer außerhalb des Radius bleiben ausgeschlossen.
+6. **Longlist ausgeben** — alle tatsächlich im Volltext geprüften Kandidaten (im Regelfall 15–20) kompakt aufführen, jeweils mit Ergebnis (passend / bedingt passend / nicht passend) und einem kurzen Grund.
+7. **Ausgabe: Top 3–5 Matches** aus der Longlist verdichten, mit kurzer Begründung pro Treffer — *warum passt diese Stelle, was ist noch zu prüfen?*
+8. **Ende des Jobsuche-Workflows.** Der Skill liefert die Top-Matches und hört hier auf. Wenn im Anschluss Anschreiben oder Lebenslauf erstellt werden sollen, muss der `bewerbungs-skill` **separat aufgerufen** werden — kein automatischer Übergang.
 
 ### Datenschutz bei Klient:innen-Matching
 

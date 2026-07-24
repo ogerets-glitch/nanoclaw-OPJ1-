@@ -115,6 +115,5 @@ Liefert ISO-Zeitstempel des letzten erfolgreichen Refreshs. Bei > 48 h alt: Oliv
 | **nanoclaw-docs** (dieser Skill) | NanoClaw-Funktionen verstehen — User-/Operator-Sicht |
 | `openbrain` | persistente Erinnerungen — alles was über die Session hinaus festgehalten werden soll |
 | `rechtsrecherche` | juristische Quellen, Gesetze, Urteile |
-| `philosophie-feed` | tägliche Lesung mit Reflexion |
 
 NanoClaw-Architektur-Interna (DB-Schema, SDK, IPC) sind hier **nicht** abgedeckt — die liegen im Repo `qwibitai/nanoclaw/docs/`. Falls Oliver explizit nach Architektur-Tiefe fragt, an ihn zurückspielen: „Das ist Architektur-Interna, nicht User-Doku — ich kann die Repo-Specs separat anbinden, wenn du willst."
